@@ -1,0 +1,4 @@
+
+main :: fn {
+    print("Hello, world!\n");
+}
