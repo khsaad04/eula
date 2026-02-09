@@ -1,4 +1,5 @@
 #![allow(unused)]
+#![allow(clippy::upper_case_acronyms)]
 
 use std::path::Path;
 
@@ -41,8 +42,8 @@ pub enum TokenKind<'a> {
     Fn,
 
     // Single character tokens
-    Bang,         // !
-    DoubleQuote,  // "
+    Bang, // !
+    // DoubleQuote,  // "
     Pound,        // #
     Dollar,       // $
     Percent,      // %
@@ -100,7 +101,7 @@ pub enum TokenKind<'a> {
     Deref,        // .*
     DotDot,       // ..
 
-    // TODO: Should contain more information regarding the error.
+    // @Todo: Should contain more information regarding the error.
     ParseError,
     EOF,
 }
@@ -138,9 +139,11 @@ impl<'a> Lexer<'a> {
         let mut token_kind = TokenKind::ParseError;
 
         self.eat_whitespaces();
+        self.eat_comments();
+        self.eat_whitespaces();
 
         let token_l0 = self.current_line_index;
-        let token_c0 = self.current_character_index - self.beginning_of_current_line;
+        let token_c0 = self.current_character_index;
 
         let mut token_l1 = token_l0;
         let mut token_c1 = token_c0;
@@ -155,7 +158,21 @@ impl<'a> Lexer<'a> {
                 None => token_kind = TokenKind::EOF,
                 _ => token_kind = TokenKind::Bang,
             },
-            Some(b'"') => token_kind = TokenKind::DoubleQuote, // TODO: Handle string literals.
+            Some(b'"') => {
+                // @Temp: Naive implementation to get this over with quickly.
+                // @Todo: Properly parse escape codes and everything.
+
+                while let Some(c) = self.next_char()
+                    && c != b'"'
+                {
+                    token_c1 += 1;
+                }
+
+                token_c1 += 1; // eat the trailing "
+
+                let string_literal = &self.input_data[token_c0 + 1..token_c1];
+                token_kind = TokenKind::StringLiteral(string_literal);
+            }
             Some(b'#') => token_kind = TokenKind::Pound,
             Some(b'$') => token_kind = TokenKind::Dollar,
             Some(b'%') => match self.peek_next_char() {
@@ -181,7 +198,7 @@ impl<'a> Lexer<'a> {
                 None => token_kind = TokenKind::EOF,
                 _ => token_kind = TokenKind::Ampersand,
             },
-            Some(b'\'') => token_kind = TokenKind::SingleQuote, // TODO: Handle character literals.
+            Some(b'\'') => token_kind = TokenKind::SingleQuote, // @Todo: Handle character literals.
             Some(b'(') => token_kind = TokenKind::OpenParen,
             Some(b')') => token_kind = TokenKind::CloseParen,
             Some(b'*') => match self.peek_next_char() {
@@ -223,6 +240,7 @@ impl<'a> Lexer<'a> {
                 _ => token_kind = TokenKind::Dash,
             },
             Some(b'.') => match self.peek_next_char() {
+                // @Todo: Handle float literals.
                 Some(b'.') => {
                     token_kind = TokenKind::DotDot;
                     self.next_char();
@@ -236,7 +254,7 @@ impl<'a> Lexer<'a> {
                 None => token_kind = TokenKind::EOF,
                 _ => token_kind = TokenKind::Dot,
             },
-            Some(b'/') => match self.peek_next_char() { // TODO: Handle comments.
+            Some(b'/') => match self.peek_next_char() {
                 Some(b'=') => {
                     token_kind = TokenKind::DivEq;
                     self.next_char();
@@ -346,22 +364,36 @@ impl<'a> Lexer<'a> {
                 None => token_kind = TokenKind::EOF,
                 _ => token_kind = TokenKind::Tilde,
             },
+            Some(c) if c.is_ascii_alphabetic() || c == b'_' => {
+                while let Some(c) = self.peek_next_char()
+                    && c.is_ascii_alphanumeric()
+                {
+                    self.next_char();
+                    token_c1 += 1;
+                }
+
+                let potential_identifier = &self.input_data[token_c0..=token_c1];
+                match potential_identifier {
+                    "fn" => token_kind = TokenKind::Fn,
+                    _ => {
+                        token_kind = TokenKind::Ident(potential_identifier);
+                    }
+                }
+            }
             None => token_kind = TokenKind::EOF,
-            _ => todo!(),
-            // TODO: Handle identifiers.
-            // TODO: Handle keywords.
-            // TODO: Handle integer literals.
-            // TODO: Handle float literals.
-            // TODO: Handle bool literals.
+            _ => token_kind = TokenKind::ParseError,
+            // @Todo: Handle integer literals.
+            // @Todo: Handle float literals.
+            // @Todo: Handle bool literals.
         }
 
         Token {
             kind: token_kind,
             file_path: self.file_path,
             l0: token_l0,
-            c0: token_c0,
+            c0: token_c0 - self.beginning_of_current_line - 1,
             l1: token_l1,
-            c1: token_c1,
+            c1: token_c1 - self.beginning_of_current_line - 1,
         }
     }
 
@@ -391,6 +423,19 @@ impl<'a> Lexer<'a> {
                 self.beginning_of_current_line = self.current_character_index;
             }
             self.next_char();
+        }
+    }
+
+    fn eat_comments(&mut self) {
+        // @Todo: Handle multi-line comments
+
+        if self.input_data[self.current_character_index..].starts_with("//") {
+            self.current_character_index += 2; // eat the //
+            while let Some(c) = self.peek_next_char()
+                && c != b'\n'
+            {
+                self.next_char();
+            }
         }
     }
 }

@@ -16,6 +16,14 @@ fn main() {
     while let token = lex.next_token()
         && token.kind != lexer::TokenKind::EOF
     {
-        println!("{:?}", token);
+        println!(
+            "{}:{}:{:>2} -> {}:{:>2}: {:?}",
+            token.file_path.display(),
+            token.l0 + 1,
+            token.c0 + 1,
+            token.l1 + 1,
+            token.c1 + 1,
+            token.kind
+        );
     }
 }
