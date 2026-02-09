@@ -1,5 +1,4 @@
-// This is an example hello world program
 
-main :: fn { // inline comments test
-    print("Hello, world!\n");
+main :: fn {
+    printf("Hello, world\n");
 }

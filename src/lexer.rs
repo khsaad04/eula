@@ -1,4 +1,4 @@
-#![allow(unused)]
+#![allow(unused)] // @Temp: To avoid those annoying warnings until I implement everything.
 #![allow(clippy::upper_case_acronyms)]
 
 use std::path::Path;
@@ -20,6 +20,7 @@ pub struct Token<'a> {
     pub kind: TokenKind<'a>,
 
     // Location
+    // maybe factor this out into a seperate struct?
     pub file_path: &'a Path,
 
     pub l0: usize,
@@ -33,17 +34,18 @@ pub struct Token<'a> {
 pub enum TokenKind<'a> {
     Ident(&'a str),
     StringLiteral(&'a str),
-    CharLiteral(char),
+    CharLiteral(u8),
     IntLiteral(i64),
     FloatLiteral(f64),
     BoolLiteral(bool),
+    // @Todo: Add hex, oct and bin literals.
+    //        Or just merge them into `IntLiteral`.
 
     // Keywords
     Fn,
 
     // Single character tokens
-    Bang, // !
-    // DoubleQuote,  // "
+    Bang,         // !
     Pound,        // #
     Dollar,       // $
     Percent,      // %
@@ -208,9 +210,26 @@ impl<'a> Lexer<'a> {
                     token_c1 += 1;
                 }
                 Some(b'.') => {
-                    token_kind = TokenKind::Ref;
-                    self.next_char();
-                    token_c1 += 1;
+                    if let Some(c) = self.peek_char(1)
+                        && c.is_ascii_digit()
+                    {
+                        //
+                        // This implies that there might be a float literal after the `*`
+                        //
+                        // Example: .2*.1
+                        //
+                        // here the `*` followed by `.` is not a referance because you can't take
+                        // referance of an integer literal in this language. Instead, this is a
+                        // binary multiplication of two floats. So, we leave the `.` untouched to
+                        // be parsed as part of the float literal the next time around.
+                        //
+
+                        token_kind = TokenKind::Star;
+                    } else {
+                        token_kind = TokenKind::Ref;
+                        self.next_char();
+                        token_c1 += 1;
+                    }
                 }
                 None => token_kind = TokenKind::EOF,
                 _ => token_kind = TokenKind::Star,
@@ -374,26 +393,49 @@ impl<'a> Lexer<'a> {
 
                 let potential_identifier = &self.input_data[token_c0..=token_c1];
                 match potential_identifier {
+                    // Booleans
+                    "true" => token_kind = TokenKind::BoolLiteral(true),
+                    "false" => token_kind = TokenKind::BoolLiteral(false),
+                    // Keywords
                     "fn" => token_kind = TokenKind::Fn,
                     _ => {
                         token_kind = TokenKind::Ident(potential_identifier);
                     }
                 }
             }
+            Some(c) if c.is_ascii_digit() => {
+                //
+                // @Todo: Allow underscores in int literals
+                //
+                // Example: 1_000_000
+                //
+
+                while let Some(c) = self.peek_next_char()
+                    && c.is_ascii_digit()
+                {
+                    self.next_char();
+                    token_c1 += 1;
+                }
+
+                let potential_int_literal = self.input_data[token_c0..=token_c1].parse::<i64>();
+                match potential_int_literal {
+                    Ok(int) => token_kind = TokenKind::IntLiteral(int),
+                    Err(_) => token_kind = TokenKind::ParseError, // @Todo: Provide more info about
+                                                                  // the kind of error.
+                }
+                // @Todo: Handle float literals.
+            }
             None => token_kind = TokenKind::EOF,
             _ => token_kind = TokenKind::ParseError,
-            // @Todo: Handle integer literals.
-            // @Todo: Handle float literals.
-            // @Todo: Handle bool literals.
         }
 
         Token {
             kind: token_kind,
             file_path: self.file_path,
-            l0: token_l0,
-            c0: token_c0 - self.beginning_of_current_line - 1,
-            l1: token_l1,
-            c1: token_c1 - self.beginning_of_current_line - 1,
+            l0: token_l0 + 1,
+            c0: token_c0 - self.beginning_of_current_line,
+            l1: token_l1 + 1,
+            c1: token_c1 - self.beginning_of_current_line,
         }
     }
 

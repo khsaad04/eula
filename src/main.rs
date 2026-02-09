@@ -16,12 +16,12 @@ fn main() {
         && token.kind != lexer::TokenKind::EOF
     {
         println!(
-            "{}:{}:{:>2} -> {}:{:>2}: {:?}",
+            "{}:{:>2}:{:>2} -> {:>2}:{:>2}: {:?}",
             token.file_path.display(),
-            token.l0 + 1,
-            token.c0 + 1,
-            token.l1 + 1,
-            token.c1 + 1,
+            token.l0,
+            token.c0,
+            token.l1,
+            token.c1,
             token.kind
         );
     }
