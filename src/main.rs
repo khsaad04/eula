@@ -1,16 +1,23 @@
 mod lexer;
 
-use std::fs;
+use std::{fs, process::exit};
 
 fn main() {
-    let input_path = "examples/hello.eula"; // @Temp: Hard-coded for now.
-    let input_string = fs::read_to_string(input_path).unwrap();
+    let mut args = std::env::args();
+    args.next(); // consume the executable path
 
-    if !input_string.is_empty() {
-        println!("\nSuccessfully read {input_path}\n");
+    let input_path = args.next();
+    if input_path.is_none() {
+        eprintln!("missing input file path.");
+        exit(1);
     }
 
-    let mut lex = lexer::Lexer::new(input_path, &input_string);
+    let input_path = input_path.unwrap();
+    let input_string = fs::read_to_string(&input_path).unwrap();
+
+    println!("Successfully read {}", &input_path);
+
+    let mut lex = lexer::Lexer::new(&input_path, &input_string);
 
     while let token = lex.next_token()
         && token.kind != lexer::TokenKind::EOF
