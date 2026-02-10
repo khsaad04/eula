@@ -9,8 +9,8 @@ main :: fn {
         } else {
             printf("%d", a);
         }
-
         printf("\n");
+
         a += 1;
     }
 }

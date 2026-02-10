@@ -1,8 +1,10 @@
 
 main :: fn {
+    // Note that all variables are zero-initialized by default at
+    // declaration. So, we didn't need to explicitly assign 0 to a and c
     a, b, c: int;
-    a = 0;
     b = 1;
+
     while a < 1_000_000 {
         printf("%d\n", a);
         c = a + b;
