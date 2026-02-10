@@ -255,6 +255,11 @@ impl<'a> Lexer<'a> {
                     self.next_char();
                     token_c1 += 1;
                 }
+                Some(c) if c.is_ascii_digit() => {
+                    self.next_char();
+                    token_c1 += 1;
+                    token_kind = self.parse_int_literal(token_c0, token_c1);
+                }
                 None => token_kind = TokenKind::EOF,
                 _ => token_kind = TokenKind::Dash,
             },
@@ -404,25 +409,8 @@ impl<'a> Lexer<'a> {
                 }
             }
             Some(c) if c.is_ascii_digit() => {
-                //
-                // @Todo: Allow underscores in int literals
-                //
-                // Example: 1_000_000
-                //
+                token_kind = self.parse_int_literal(token_c0, token_c1);
 
-                while let Some(c) = self.peek_next_char()
-                    && c.is_ascii_digit()
-                {
-                    self.next_char();
-                    token_c1 += 1;
-                }
-
-                let potential_int_literal = self.input_data[token_c0..=token_c1].parse::<i64>();
-                match potential_int_literal {
-                    Ok(int) => token_kind = TokenKind::IntLiteral(int),
-                    Err(_) => token_kind = TokenKind::ParseError, // @Todo: Provide more info about
-                                                                  // the kind of error.
-                }
                 // @Todo: Handle float literals.
             }
             None => token_kind = TokenKind::EOF,
@@ -478,6 +466,32 @@ impl<'a> Lexer<'a> {
             {
                 self.next_char();
             }
+        }
+    }
+
+    fn parse_int_literal(&mut self, token_c0: usize, mut token_c1: usize) -> TokenKind<'a> {
+        let mut v = String::new();
+
+        while let Some(c) = self.peek_next_char()
+            && (c.is_ascii_digit() || c == b'_')
+        // We allow an indefinite amount of underscores inside int literals (for now);
+        // even trailing underscores.
+        {
+            self.next_char();
+            token_c1 += 1;
+        }
+
+        let potential_int_literal = &self.input_data[token_c0..=token_c1];
+        for c in potential_int_literal.chars() {
+            if c == '_' {
+                continue;
+            }
+            v.push(c);
+        }
+
+        match v.parse::<i64>() {
+            Ok(w) => TokenKind::IntLiteral(w),
+            Err(_) => TokenKind::ParseError,
         }
     }
 }
