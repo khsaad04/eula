@@ -224,7 +224,7 @@ impl<'src> Lexer<'src> {
                 }
                 Some(c) if c.is_ascii_digit() => {
                     self.next_char();
-                    token_kind = self.parse_int_literal(token_col_start);
+                    token_kind = self.parse_int_literal(token_col_start, true);
                 }
                 None => token_kind = TokenKind::EOF,
                 _ => token_kind = TokenKind::Dash,
@@ -348,7 +348,7 @@ impl<'src> Lexer<'src> {
                 }
             }
             Some(c) if c.is_ascii_digit() => {
-                token_kind = self.parse_int_literal(token_col_start);
+                token_kind = self.parse_int_literal(token_col_start, false);
                 // @Todo: Handle float literals.
             }
             Some(b'#') => token_kind = TokenKind::Pound,
@@ -428,7 +428,7 @@ impl<'src> Lexer<'src> {
         // @Todo: Handle block comments
     }
 
-    fn parse_int_literal(&mut self, token_col_start: usize) -> TokenKind<'src> {
+    fn parse_int_literal(&mut self, token_col_start: usize, is_negative: bool) -> TokenKind<'src> {
         let mut v: i64 = 0;
 
         while let Some(c) = self.peek_next_char()
@@ -438,6 +438,12 @@ impl<'src> Lexer<'src> {
         {
             self.next_char();
         }
+
+        let token_col_start = if is_negative {
+            token_col_start + 1
+        } else {
+            token_col_start
+        };
 
         let literal_string = &self.source[token_col_start..self.current_char_index];
 
@@ -449,6 +455,10 @@ impl<'src> Lexer<'src> {
 
             v += (w - b'0') as i64 * factor as i64;
             factor *= 10;
+        }
+
+        if is_negative {
+            v = -v;
         }
 
         TokenKind::IntLiteral(v)
