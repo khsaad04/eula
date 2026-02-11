@@ -135,51 +135,47 @@ impl<'src> Lexer<'src> {
     }
 
     fn advance_token(&mut self) -> Token<'src> {
-        let mut token_kind = TokenKind::ParseError;
-
         self.eat_whitespaces();
         self.eat_comments();
 
         let token_line_start = self.current_line_index;
         let token_col_start = self.current_char_index;
 
-        match self.next_char() {
+        let token_kind = match self.next_char() {
             Some(b'!') => match self.peek_next_char() {
                 Some(b'=') => {
-                    token_kind = TokenKind::NotEq;
                     self.next_char();
+                    TokenKind::NotEq
                 }
-                None => token_kind = TokenKind::EOF,
-                _ => token_kind = TokenKind::Bang,
+                None => TokenKind::EOF,
+                _ => TokenKind::Bang,
             },
-            Some(b'\'') => token_kind = TokenKind::SingleQuote, // @Todo: Handle character literals.
-            Some(b'"') => {
-                token_kind = self.parse_str_literal(token_col_start);
-            }
+            Some(b'\'') => TokenKind::SingleQuote, // @Todo: Handle character literals.
+            Some(b'"') => self.parse_str_literal(token_col_start),
             Some(b'%') => match self.peek_next_char() {
                 Some(b'=') => {
-                    token_kind = TokenKind::ModEq;
                     self.next_char();
+                    TokenKind::ModEq
                 }
-                None => token_kind = TokenKind::EOF,
-                _ => token_kind = TokenKind::Percent,
+                None => TokenKind::EOF,
+                _ => TokenKind::Percent,
             },
             Some(b'&') => match self.peek_next_char() {
                 Some(b'=') => {
-                    token_kind = TokenKind::BitwiseAndEq;
                     self.next_char();
+                    TokenKind::BitwiseAndEq
                 }
                 Some(b'&') => {
-                    token_kind = TokenKind::AndAnd;
                     self.next_char();
+                    TokenKind::AndAnd
                 }
-                None => token_kind = TokenKind::EOF,
-                _ => token_kind = TokenKind::Ampersand,
+                None => TokenKind::EOF,
+                _ => TokenKind::Ampersand,
             },
             Some(b'*') => match self.peek_next_char() {
                 Some(b'=') => {
-                    token_kind = TokenKind::MulEq;
                     self.next_char();
+                    TokenKind::MulEq
                 }
                 Some(b'.') => {
                     if let Some(c) = self.peek_char(1)
@@ -196,137 +192,137 @@ impl<'src> Lexer<'src> {
                         // be parsed as part of the float literal the next time around.
                         //
 
-                        token_kind = TokenKind::Star;
+                        TokenKind::Star
                     } else {
-                        token_kind = TokenKind::Ref;
                         self.next_char();
+                        TokenKind::Ref
                     }
                 }
-                None => token_kind = TokenKind::EOF,
-                _ => token_kind = TokenKind::Star,
+                None => TokenKind::EOF,
+                _ => TokenKind::Star,
             },
             Some(b'+') => match self.peek_next_char() {
                 Some(b'=') => {
-                    token_kind = TokenKind::PlusEq;
                     self.next_char();
+                    TokenKind::PlusEq
                 }
-                None => token_kind = TokenKind::EOF,
-                _ => token_kind = TokenKind::Plus,
+                None => TokenKind::EOF,
+                _ => TokenKind::Plus,
             },
             Some(b'-') => match self.peek_next_char() {
                 Some(b'=') => {
-                    token_kind = TokenKind::MinusEq;
                     self.next_char();
+                    TokenKind::MinusEq
                 }
                 Some(b'>') => {
-                    token_kind = TokenKind::Arrow;
                     self.next_char();
+                    TokenKind::Arrow
                 }
                 Some(c) if c.is_ascii_digit() => {
                     self.next_char();
-                    token_kind = self.parse_int_literal(token_col_start, true);
+                    self.parse_int_literal(token_col_start, true)
                 }
-                None => token_kind = TokenKind::EOF,
-                _ => token_kind = TokenKind::Dash,
+                None => TokenKind::EOF,
+                _ => TokenKind::Dash,
             },
             Some(b'.') => match self.peek_next_char() {
                 // @Todo: Handle float literals.
                 Some(b'.') => {
-                    token_kind = TokenKind::DotDot;
                     self.next_char();
+                    TokenKind::DotDot
                 }
                 Some(b'*') => {
-                    token_kind = TokenKind::Deref;
                     self.next_char();
+                    TokenKind::Deref
                 }
-                None => token_kind = TokenKind::EOF,
-                _ => token_kind = TokenKind::Dot,
+                None => TokenKind::EOF,
+                _ => TokenKind::Dot,
             },
             Some(b'/') => match self.peek_next_char() {
                 Some(b'=') => {
-                    token_kind = TokenKind::DivEq;
                     self.next_char();
+                    TokenKind::DivEq
                 }
-                None => token_kind = TokenKind::EOF,
-                _ => token_kind = TokenKind::Slash,
+                None => TokenKind::EOF,
+                _ => TokenKind::Slash,
             },
             Some(b'<') => match self.peek_next_char() {
                 Some(b'=') => {
-                    token_kind = TokenKind::LessEq;
                     self.next_char();
+                    TokenKind::LessEq
                 }
                 Some(b'<') => {
+                    self.next_char();
                     match self.peek_next_char() {
                         Some(b'=') => {
-                            token_kind = TokenKind::BitwiseShlEq;
                             self.next_char();
+                            TokenKind::BitwiseShlEq
                         }
-                        None => token_kind = TokenKind::EOF,
-                        _ => token_kind = TokenKind::BitwiseShl,
+                        None => TokenKind::EOF,
+                        _ => TokenKind::BitwiseShl,
                     }
-                    self.next_char();
                 }
-                None => token_kind = TokenKind::EOF,
-                _ => token_kind = TokenKind::LessThan,
+                None => TokenKind::EOF,
+                _ => TokenKind::LessThan,
             },
             Some(b'=') => match self.peek_next_char() {
                 Some(b'=') => {
-                    token_kind = TokenKind::EqEq;
                     self.next_char();
+                    TokenKind::EqEq
                 }
                 Some(b'>') => {
-                    token_kind = TokenKind::EqArrow;
                     self.next_char();
+                    TokenKind::EqArrow
                 }
-                None => token_kind = TokenKind::EOF,
-                _ => token_kind = TokenKind::Eq,
+                None => TokenKind::EOF,
+                _ => TokenKind::Eq,
             },
             Some(b'>') => match self.peek_next_char() {
                 Some(b'=') => {
-                    token_kind = TokenKind::GreaterEq;
                     self.next_char();
+                    TokenKind::GreaterEq
                 }
                 Some(b'>') => {
+                    self.next_char();
                     match self.peek_next_char() {
                         Some(b'=') => {
-                            token_kind = TokenKind::BitwiseShrEq;
                             self.next_char();
+                            TokenKind::BitwiseShrEq
                         }
-                        None => token_kind = TokenKind::EOF,
-                        _ => token_kind = TokenKind::BitwiseShr,
+                        None => TokenKind::EOF,
+                        _ => TokenKind::BitwiseShr,
                     }
-                    self.next_char();
                 }
-                None => token_kind = TokenKind::EOF,
-                _ => token_kind = TokenKind::GreaterThan,
+                None => TokenKind::EOF,
+                _ => TokenKind::GreaterThan,
             },
             Some(b'^') => match self.peek_next_char() {
                 Some(b'=') => {
-                    token_kind = TokenKind::BitwiseXorEq;
                     self.next_char();
+                    TokenKind::BitwiseXorEq
                 }
-                None => token_kind = TokenKind::EOF,
-                _ => token_kind = TokenKind::Caret,
+                None => TokenKind::EOF,
+                _ => TokenKind::Caret,
             },
             Some(b'|') => match self.peek_next_char() {
                 Some(b'=') => {
-                    token_kind = TokenKind::BitwiseOrEq;
                     self.next_char();
+                    TokenKind::BitwiseOrEq
                 }
                 Some(b'|') => {
-                    token_kind = TokenKind::OrOr;
                     self.next_char();
+                    TokenKind::OrOr
                 }
-                None => token_kind = TokenKind::EOF,
-                _ => token_kind = TokenKind::Bar,
+                None => TokenKind::EOF,
+                _ => TokenKind::Bar,
             },
             Some(b'~') => match self.peek_next_char() {
                 Some(b'=') => {
-                    token_kind = TokenKind::BitwiseNotEq;
                     self.next_char();
+                    TokenKind::BitwiseNotEq
                 }
-                None => token_kind = TokenKind::EOF,
-                _ => token_kind = TokenKind::Tilde,
+                None => TokenKind::EOF,
+                _ => TokenKind::Tilde,
             },
             Some(c) if c.is_ascii_alphabetic() || c == b'_' => {
                 while let Some(c) = self.peek_next_char()
@@ -338,38 +334,33 @@ impl<'src> Lexer<'src> {
                 let potential_identifier = &self.source[token_col_start..self.current_char_index];
                 match potential_identifier {
                     // Booleans
-                    "true" => token_kind = TokenKind::BoolLiteral(true),
-                    "false" => token_kind = TokenKind::BoolLiteral(false),
+                    "true" => TokenKind::BoolLiteral(true),
+                    "false" => TokenKind::BoolLiteral(false),
                     // Keywords
-                    "fn" => token_kind = TokenKind::Fn,
-                    _ => {
-                        token_kind = TokenKind::Ident(potential_identifier);
-                    }
+                    "fn" => TokenKind::Fn,
+                    _ => TokenKind::Ident(potential_identifier),
                 }
             }
-            Some(c) if c.is_ascii_digit() => {
-                token_kind = self.parse_int_literal(token_col_start, false);
-                // @Todo: Handle float literals.
-            }
-            Some(b'#') => token_kind = TokenKind::Pound,
-            Some(b'$') => token_kind = TokenKind::Dollar,
-            Some(b'(') => token_kind = TokenKind::OpenParen,
-            Some(b')') => token_kind = TokenKind::CloseParen,
-            Some(b',') => token_kind = TokenKind::Comma,
-            Some(b':') => token_kind = TokenKind::Colon,
-            Some(b';') => token_kind = TokenKind::Semicolon,
-            Some(b'?') => token_kind = TokenKind::Question,
-            Some(b'@') => token_kind = TokenKind::At,
-            Some(b'[') => token_kind = TokenKind::OpenBracket,
-            Some(b'\\') => token_kind = TokenKind::Backslash,
-            Some(b']') => token_kind = TokenKind::CloseBracket,
-            Some(b'_') => token_kind = TokenKind::Underscore,
-            Some(b'`') => token_kind = TokenKind::Backtick,
-            Some(b'{') => token_kind = TokenKind::OpenCurly,
-            Some(b'}') => token_kind = TokenKind::CloseCurly,
-            None => token_kind = TokenKind::EOF,
-            _ => token_kind = TokenKind::ParseError,
-        }
+            Some(c) if c.is_ascii_digit() => self.parse_int_literal(token_col_start, false), // @Todo: Handle float literals.
+            Some(b'#') => TokenKind::Pound,
+            Some(b'$') => TokenKind::Dollar,
+            Some(b'(') => TokenKind::OpenParen,
+            Some(b')') => TokenKind::CloseParen,
+            Some(b',') => TokenKind::Comma,
+            Some(b':') => TokenKind::Colon,
+            Some(b';') => TokenKind::Semicolon,
+            Some(b'?') => TokenKind::Question,
+            Some(b'@') => TokenKind::At,
+            Some(b'[') => TokenKind::OpenBracket,
+            Some(b'\\') => TokenKind::Backslash,
+            Some(b']') => TokenKind::CloseBracket,
+            Some(b'_') => TokenKind::Underscore,
+            Some(b'`') => TokenKind::Backtick,
+            Some(b'{') => TokenKind::OpenCurly,
+            Some(b'}') => TokenKind::CloseCurly,
+            None => TokenKind::EOF,
+            _ => TokenKind::ParseError,
+        };
 
         Token {
             kind: token_kind,
