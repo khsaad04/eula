@@ -4,7 +4,7 @@ use std::{fs, process::exit};
 
 fn main() {
     let mut args = std::env::args();
-    args.next(); // consume the executable path
+    args.next(); // Consume the executable path.
 
     let input_path = args.next();
     if input_path.is_none() {
@@ -17,14 +17,13 @@ fn main() {
 
     println!("Successfully read {}", &input_path);
 
-    let mut lex = lexer::Lexer::new(&input_path, &input_string);
-
+    let mut lex = lexer::Lexer::new(&input_string, &input_path);
     while let token = lex.next_token()
         && token.kind != lexer::TokenKind::EOF
     {
         println!(
             "{}:{:>2}:{:>2} -> {:>2}:{:>2}: {:?}",
-            token.file_path.display(),
+            token.source_path.display(),
             token.l0,
             token.c0,
             token.l1,
