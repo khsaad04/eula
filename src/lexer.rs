@@ -218,15 +218,17 @@ impl<'src> Lexer<'src> {
                     self.next_char();
                     TokenKind::Arrow
                 }
-                Some(c) if c.is_ascii_digit() => {
+                Some(c) if c.is_ascii_digit() || c == b'.' => {
                     self.next_char();
-                    self.parse_int_literal(token_col_start, true)
+                    self.parse_int_or_float_literal(token_col_start, true)
                 }
                 None => TokenKind::EOF,
                 _ => TokenKind::Dash,
             },
             Some(b'.') => match self.peek_next_char() {
-                // @Todo: Handle float literals.
+                Some(c) if c.is_ascii_digit() => {
+                    self.parse_float_literal(token_col_start, false, 0)
+                }
                 Some(b'.') => {
                     self.next_char();
                     TokenKind::DotDot
@@ -341,7 +343,9 @@ impl<'src> Lexer<'src> {
                     _ => TokenKind::Ident(potential_identifier),
                 }
             }
-            Some(c) if c.is_ascii_digit() => self.parse_int_literal(token_col_start, false), // @Todo: Handle float literals.
+            Some(c) if c.is_ascii_digit() => {
+                self.parse_int_or_float_literal(token_col_start, false)
+            }
             Some(b'#') => TokenKind::Pound,
             Some(b'$') => TokenKind::Dollar,
             Some(b'(') => TokenKind::OpenParen,
@@ -419,8 +423,13 @@ impl<'src> Lexer<'src> {
         // @Todo: Handle block comments
     }
 
-    fn parse_int_literal(&mut self, token_col_start: usize, is_negative: bool) -> TokenKind<'src> {
+    fn parse_int_or_float_literal(
+        &mut self,
+        token_col_start: usize,
+        is_negative: bool,
+    ) -> TokenKind<'src> {
         let mut v: i64 = 0;
+        let mut len = 0;
 
         while let Some(c) = self.peek_next_char()
             && (c.is_ascii_digit() || c == b'_')
@@ -428,6 +437,7 @@ impl<'src> Lexer<'src> {
         // even trailing underscores.
         {
             self.next_char();
+            len += 1;
         }
 
         let token_col_start = if is_negative {
@@ -452,7 +462,47 @@ impl<'src> Lexer<'src> {
             v = -v;
         }
 
-        TokenKind::IntLiteral(v)
+        if self.peek_next_char() == Some(b'.') {
+            self.next_char();
+            self.parse_float_literal(token_col_start + len + 2, is_negative, v)
+        } else {
+            TokenKind::IntLiteral(v)
+        }
+    }
+
+    fn parse_float_literal(
+        &mut self,
+        token_col_start: usize,
+        is_negative: bool,
+        integer_part: i64,
+    ) -> TokenKind<'src> {
+        let mut v = integer_part as f64;
+
+        while let Some(c) = self.peek_next_char()
+            && (c.is_ascii_digit() || c == b'_')
+        // We allow an indefinite amount of underscores inside float literals (for now);
+        // even trailing underscores.
+        {
+            self.next_char();
+        }
+
+        let literal_string = &self.source[token_col_start..self.current_char_index];
+
+        let mut factor = 0.1;
+        for w in literal_string.bytes() {
+            if w == b'_' {
+                continue;
+            }
+
+            if is_negative {
+                v -= (w - b'0') as f64 * factor;
+            } else {
+                v += (w - b'0') as f64 * factor;
+            }
+            factor *= 0.1;
+        }
+
+        TokenKind::FloatLiteral(v)
     }
 
     fn parse_str_literal(&mut self, token_col_start: usize) -> TokenKind<'src> {
