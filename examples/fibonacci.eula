@@ -1,7 +1,5 @@
-
 main :: fn {
-    // Note that all variables are zero-initialized by default at
-    // declaration. So, we didn't need to explicitly assign 0 to a and c
+    // Initialized to 0 by default.
     a, b, c: int;
     b = 1;
 

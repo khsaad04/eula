@@ -1,4 +1,3 @@
-
 main :: fn {
     printf("Hello, world\n");
 }
