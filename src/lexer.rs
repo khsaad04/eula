@@ -7,12 +7,12 @@ pub struct Lexer<'src> {
     source: &'src str,
     pub source_path: &'src Path,
 
-    current_char_index: usize,
-    current_line_index: usize,
-    start_of_current_line: usize,
+    character_cursor: usize,
+    line_cursor: usize,
+    line_begin: usize,
 
     // For now we only store upto a maximum of 1 token for lookahead.
-    // In the future this might turn into a `[Option<Token<'src>>;n]`
+    // In the future this might turn into `[Option<Token<'src>>;n]`.
     token_buffer: Option<Token<'src>>,
 }
 
@@ -30,13 +30,14 @@ pub struct Token<'src> {
 #[derive(Debug, PartialEq)]
 pub enum TokenKind<'src> {
     Ident(&'src str),
+
+    // Literals
     StrLiteral(&'src str),
     CharLiteral(u8),
     IntLiteral(i64),
     FloatLiteral(f64),
     BoolLiteral(bool),
-    // @Todo: Add hex, oct and bin literals.
-    //        Or just merge them into `IntLiteral`.
+    // @Todo: Add hex, oct and bin literals; or merge them into `IntLiteral`.
 
     // Keywords
     Fn,
@@ -100,26 +101,26 @@ pub enum TokenKind<'src> {
     BitwiseOrEq,  // |=
     BitwiseXorEq, // ^=
 
-    // @Todo: Should provide more information regarding the error.
+    // @Todo: Provide more information about the error.
     ParseError,
     EOF,
 }
 
 impl<'src> Lexer<'src> {
-    pub fn new(source: &'src str, path: &'src str) -> Self {
+    pub fn new(source: &'src str, source_path: &'src str) -> Self {
         Self {
             source,
-            source_path: Path::new(path),
+            source_path: Path::new(source_path),
 
-            current_char_index: 0,
-            current_line_index: 0,
-            start_of_current_line: 0,
+            character_cursor: 0,
+            line_cursor: 0,
+            line_begin: 0,
 
             token_buffer: None,
         }
     }
 
-    pub fn next_token(&mut self) -> Token<'_> {
+    pub fn next_token(&mut self) -> Token<'src> {
         if let Some(token) = self.token_buffer.take() {
             token
         } else {
@@ -138,8 +139,8 @@ impl<'src> Lexer<'src> {
         self.eat_whitespaces();
         self.eat_comments();
 
-        let token_line_start = self.current_line_index;
-        let token_col_start = self.current_char_index;
+        let token_l0 = self.line_cursor;
+        let token_c0 = self.character_cursor;
 
         let token_kind = match self.next_char() {
             Some(b'!') => match self.peek_next_char() {
@@ -151,7 +152,7 @@ impl<'src> Lexer<'src> {
                 _ => TokenKind::Bang,
             },
             Some(b'\'') => TokenKind::SingleQuote, // @Todo: Handle character literals.
-            Some(b'"') => self.parse_str_literal(token_col_start),
+            Some(b'"') => self.parse_str_literal(token_c0),
             Some(b'%') => match self.peek_next_char() {
                 Some(b'=') => {
                     self.next_char();
@@ -220,14 +221,15 @@ impl<'src> Lexer<'src> {
                 }
                 Some(c) if c.is_ascii_digit() || c == b'.' => {
                     self.next_char();
-                    self.parse_int_or_float_literal(token_col_start, true)
+                    self.parse_int_or_float_literal(token_c0, true)
                 }
                 None => TokenKind::EOF,
                 _ => TokenKind::Dash,
             },
             Some(b'.') => match self.peek_next_char() {
                 Some(c) if c.is_ascii_digit() => {
-                    self.parse_float_literal(token_col_start, false, 0)
+                    self.next_char();
+                    self.parse_float_literal(token_c0, false, 0)
                 }
                 Some(b'.') => {
                     self.next_char();
@@ -333,7 +335,7 @@ impl<'src> Lexer<'src> {
                     self.next_char();
                 }
 
-                let potential_identifier = &self.source[token_col_start..self.current_char_index];
+                let potential_identifier = &self.source[token_c0..self.character_cursor];
                 match potential_identifier {
                     // Booleans
                     "true" => TokenKind::BoolLiteral(true),
@@ -343,9 +345,7 @@ impl<'src> Lexer<'src> {
                     _ => TokenKind::Ident(potential_identifier),
                 }
             }
-            Some(c) if c.is_ascii_digit() => {
-                self.parse_int_or_float_literal(token_col_start, false)
-            }
+            Some(c) if c.is_ascii_digit() => self.parse_int_or_float_literal(token_c0, false),
             Some(b'#') => TokenKind::Pound,
             Some(b'$') => TokenKind::Dollar,
             Some(b'(') => TokenKind::OpenParen,
@@ -369,16 +369,16 @@ impl<'src> Lexer<'src> {
         Token {
             kind: token_kind,
             source_path: self.source_path,
-            l0: token_line_start + 1,
-            c0: token_col_start - self.start_of_current_line,
-            l1: token_line_start + 1,
-            c1: self.current_char_index - self.start_of_current_line - 1,
+            l0: token_l0 + 1,
+            c0: token_c0 - self.line_begin,
+            l1: token_l0 + 1,
+            c1: self.character_cursor - self.line_begin - 1,
         }
     }
 
     fn next_char(&mut self) -> Option<u8> {
         let result = self.peek_next_char();
-        self.current_char_index += 1;
+        self.character_cursor += 1;
         result
     }
 
@@ -389,7 +389,7 @@ impl<'src> Lexer<'src> {
     fn peek_char(&self, n: usize) -> Option<u8> {
         self.source
             .as_bytes()
-            .get(self.current_char_index + n)
+            .get(self.character_cursor + n)
             .copied()
     }
 
@@ -398,8 +398,8 @@ impl<'src> Lexer<'src> {
             && c.is_ascii_whitespace()
         {
             if c == b'\n' {
-                self.current_line_index += 1;
-                self.start_of_current_line = self.current_char_index;
+                self.line_cursor += 1;
+                self.line_begin = self.character_cursor;
             }
             self.next_char();
         }
@@ -408,8 +408,8 @@ impl<'src> Lexer<'src> {
     fn eat_comments(&mut self) {
         loop {
             // Line comments
-            if self.source[self.current_char_index..].starts_with("//") {
-                self.current_char_index += 2; // consume the leading `//`
+            if self.source[self.character_cursor..].starts_with("//") {
+                self.character_cursor += 2; // consume the leading `//`
                 while let Some(c) = self.peek_next_char()
                     && c != b'\n'
                 {
@@ -425,84 +425,76 @@ impl<'src> Lexer<'src> {
 
     fn parse_int_or_float_literal(
         &mut self,
-        token_col_start: usize,
+        token_c0: usize,
         is_negative: bool,
     ) -> TokenKind<'src> {
-        let mut v: i64 = 0;
-        let mut len = 0;
+        let mut value: i64 = 0;
 
-        while let Some(c) = self.peek_next_char()
-            && (c.is_ascii_digit() || c == b'_')
         // We allow an indefinite amount of underscores inside int literals (for now);
         // even trailing underscores.
+        while let Some(c) = self.peek_next_char()
+            && (c.is_ascii_digit() || c == b'_')
         {
             self.next_char();
-            len += 1;
         }
 
-        let token_col_start = if is_negative {
-            token_col_start + 1
-        } else {
-            token_col_start
-        };
-
-        let literal_string = &self.source[token_col_start..self.current_char_index];
+        let literal = &self.source[token_c0..self.character_cursor];
 
         let mut factor = 1;
-        for w in literal_string.bytes().rev() {
-            if w == b'_' {
+        for w in literal.bytes().rev() {
+            if !w.is_ascii_digit() {
                 continue;
             }
 
-            v += (w - b'0') as i64 * factor as i64;
+            value += (w - b'0') as i64 * factor as i64;
             factor *= 10;
         }
 
         if is_negative {
-            v = -v;
+            value = -value;
         }
 
         if self.peek_next_char() == Some(b'.') {
             self.next_char();
-            self.parse_float_literal(token_col_start + len + 2, is_negative, v)
+            self.parse_float_literal(self.character_cursor, is_negative, value)
         } else {
-            TokenKind::IntLiteral(v)
+            TokenKind::IntLiteral(value)
         }
     }
 
     fn parse_float_literal(
         &mut self,
-        token_col_start: usize,
+        token_c0: usize,
         is_negative: bool,
         integer_part: i64,
     ) -> TokenKind<'src> {
-        let mut v = integer_part as f64;
+        let mut value = integer_part as f64;
 
-        while let Some(c) = self.peek_next_char()
-            && (c.is_ascii_digit() || c == b'_')
         // We allow an indefinite amount of underscores inside float literals (for now);
         // even trailing underscores.
+        while let Some(c) = self.peek_next_char()
+            && (c.is_ascii_digit() || c == b'_')
         {
             self.next_char();
         }
 
-        let literal_string = &self.source[token_col_start..self.current_char_index];
+        let literal = &self.source[token_c0..self.character_cursor];
 
         let mut factor = 0.1;
-        for w in literal_string.bytes() {
-            if w == b'_' {
+        for w in literal.bytes() {
+            if !w.is_ascii_digit() {
                 continue;
             }
 
             if is_negative {
-                v -= (w - b'0') as f64 * factor;
+                value -= (w - b'0') as f64 * factor;
             } else {
-                v += (w - b'0') as f64 * factor;
+                value += (w - b'0') as f64 * factor;
             }
             factor *= 0.1;
         }
 
-        TokenKind::FloatLiteral(v)
+        TokenKind::FloatLiteral(value)
     }
 
     fn parse_str_literal(&mut self, token_col_start: usize) -> TokenKind<'src> {
@@ -516,7 +508,6 @@ impl<'src> Lexer<'src> {
         }
 
         // The +1 and -1 are to avoid pushing the quotation marks into the string literal
-        let string_literal = &self.source[token_col_start + 1..self.current_char_index - 1];
-        TokenKind::StrLiteral(string_literal)
+        TokenKind::StrLiteral(&self.source[token_col_start + 1..self.character_cursor - 1])
     }
 }
