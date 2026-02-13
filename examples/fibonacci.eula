@@ -3,7 +3,7 @@ main :: fn {
     a, b, c: int;
     b = 1;
 
-    while a < 1_000_000 {
+    for a < 1_000_000 {
         printf("%d\n", a);
         c = a + b;
         a = b;

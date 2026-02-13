@@ -139,8 +139,8 @@ impl<'src> Lexer<'src> {
         self.eat_whitespaces();
         self.eat_comments();
 
-        let token_l0 = self.line_cursor;
-        let token_c0 = self.character_cursor;
+        let l0 = self.line_cursor + 1;
+        let c0 = self.character_cursor - self.line_begin + 1;
 
         let token_kind = match self.next_char() {
             Some(b'!') => match self.peek_next_char() {
@@ -152,7 +152,7 @@ impl<'src> Lexer<'src> {
                 _ => TokenKind::Bang,
             },
             Some(b'\'') => TokenKind::SingleQuote, // @Todo: Handle character literals.
-            Some(b'"') => self.parse_str_literal(token_c0),
+            Some(b'"') => self.parse_str_literal(self.character_cursor),
             Some(b'%') => match self.peek_next_char() {
                 Some(b'=') => {
                     self.next_char();
@@ -221,7 +221,7 @@ impl<'src> Lexer<'src> {
                 }
                 Some(c) if c.is_ascii_digit() || c == b'.' => {
                     self.next_char();
-                    self.parse_int_or_float_literal(token_c0, true)
+                    self.parse_int_or_float_literal(self.character_cursor, true)
                 }
                 None => TokenKind::EOF,
                 _ => TokenKind::Dash,
@@ -229,7 +229,7 @@ impl<'src> Lexer<'src> {
             Some(b'.') => match self.peek_next_char() {
                 Some(c) if c.is_ascii_digit() => {
                     self.next_char();
-                    self.parse_float_literal(token_c0, false, 0)
+                    self.parse_float_literal(self.character_cursor, false, 0)
                 }
                 Some(b'.') => {
                     self.next_char();
@@ -335,7 +335,9 @@ impl<'src> Lexer<'src> {
                     self.next_char();
                 }
 
-                let potential_identifier = &self.source[token_c0..self.character_cursor];
+                let potential_identifier =
+                    &self.source[c0 + self.line_begin - 1..self.character_cursor];
+
                 match potential_identifier {
                     // Booleans
                     "true" => TokenKind::BoolLiteral(true),
@@ -345,7 +347,9 @@ impl<'src> Lexer<'src> {
                     _ => TokenKind::Ident(potential_identifier),
                 }
             }
-            Some(c) if c.is_ascii_digit() => self.parse_int_or_float_literal(token_c0, false),
+            Some(c) if c.is_ascii_digit() => {
+                self.parse_int_or_float_literal(self.character_cursor, false)
+            }
             Some(b'#') => TokenKind::Pound,
             Some(b'$') => TokenKind::Dollar,
             Some(b'(') => TokenKind::OpenParen,
@@ -366,13 +370,16 @@ impl<'src> Lexer<'src> {
             _ => TokenKind::ParseError,
         };
 
+        let l1 = self.line_cursor + 1;
+        let c1 = self.character_cursor - self.line_begin;
+
         Token {
             kind: token_kind,
             source_path: self.source_path,
-            l0: token_l0 + 1,
-            c0: token_c0 - self.line_begin,
-            l1: token_l0 + 1,
-            c1: self.character_cursor - self.line_begin - 1,
+            l0,
+            c0,
+            l1,
+            c1,
         }
     }
 
@@ -397,11 +404,11 @@ impl<'src> Lexer<'src> {
         while let Some(c) = self.peek_next_char()
             && c.is_ascii_whitespace()
         {
+            self.next_char();
             if c == b'\n' {
                 self.line_cursor += 1;
                 self.line_begin = self.character_cursor;
             }
-            self.next_char();
         }
     }
 
@@ -425,7 +432,7 @@ impl<'src> Lexer<'src> {
 
     fn parse_int_or_float_literal(
         &mut self,
-        token_c0: usize,
+        token_start_pos: usize,
         is_negative: bool,
     ) -> TokenKind<'src> {
         let mut value: i64 = 0;
@@ -438,15 +445,15 @@ impl<'src> Lexer<'src> {
             self.next_char();
         }
 
-        let literal = &self.source[token_c0..self.character_cursor];
+        let literal = &self.source[token_start_pos..self.character_cursor];
 
         let mut factor = 1;
-        for w in literal.bytes().rev() {
-            if !w.is_ascii_digit() {
+        for d in literal.bytes().rev() {
+            if !d.is_ascii_digit() {
                 continue;
             }
 
-            value += (w - b'0') as i64 * factor as i64;
+            value += (d - b'0') as i64 * factor as i64;
             factor *= 10;
         }
 
@@ -464,7 +471,7 @@ impl<'src> Lexer<'src> {
 
     fn parse_float_literal(
         &mut self,
-        token_c0: usize,
+        token_start_pos: usize,
         is_negative: bool,
         integer_part: i64,
     ) -> TokenKind<'src> {
@@ -478,18 +485,18 @@ impl<'src> Lexer<'src> {
             self.next_char();
         }
 
-        let literal = &self.source[token_c0..self.character_cursor];
+        let literal = &self.source[token_start_pos..self.character_cursor];
 
         let mut factor = 0.1;
-        for w in literal.bytes() {
-            if !w.is_ascii_digit() {
+        for d in literal.bytes() {
+            if !d.is_ascii_digit() {
                 continue;
             }
 
             if is_negative {
-                value -= (w - b'0') as f64 * factor;
+                value -= (d - b'0') as f64 * factor;
             } else {
-                value += (w - b'0') as f64 * factor;
+                value += (d - b'0') as f64 * factor;
             }
             factor *= 0.1;
         }
@@ -497,7 +504,7 @@ impl<'src> Lexer<'src> {
         TokenKind::FloatLiteral(value)
     }
 
-    fn parse_str_literal(&mut self, token_col_start: usize) -> TokenKind<'src> {
+    fn parse_str_literal(&mut self, token_start_pos: usize) -> TokenKind<'src> {
         // @Temp: Naive implementation to get this over with quickly.
         // @Todo: Properly parse escape codes and everything.
 
@@ -507,7 +514,7 @@ impl<'src> Lexer<'src> {
             }
         }
 
-        // The +1 and -1 are to avoid pushing the quotation marks into the string literal
-        TokenKind::StrLiteral(&self.source[token_col_start + 1..self.character_cursor - 1])
+        // The -1 is to avoid pushing the trailing quotation mark into the string literal.
+        TokenKind::StrLiteral(&self.source[token_start_pos..self.character_cursor - 1])
     }
 }
