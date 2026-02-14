@@ -19,7 +19,7 @@ fn main() {
 
     let mut lex = lexer::Lexer::new(&input_string, &input_path);
     while let token = lex.next_token()
-        && token.kind != lexer::TokenKind::EOF
+        && token.kind != lexer::TokenKind::Eof
     {
         println!(
             "{}:{:>2}:{:>2} -> {:>2}:{:>2}: {:?}",

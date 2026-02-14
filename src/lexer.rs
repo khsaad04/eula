@@ -1,5 +1,4 @@
 #![allow(unused)] // @Temp: To avoid those annoying warnings until I implement everything.
-#![allow(clippy::upper_case_acronyms)]
 
 use std::path::Path;
 
@@ -103,7 +102,7 @@ pub enum TokenKind<'src> {
 
     // @Todo: Provide more information about the error.
     ParseError,
-    EOF,
+    Eof,
 }
 
 impl<'src> Lexer<'src> {
@@ -148,7 +147,7 @@ impl<'src> Lexer<'src> {
                     self.next_char();
                     TokenKind::NotEq
                 }
-                None => TokenKind::EOF,
+                None => TokenKind::Eof,
                 _ => TokenKind::Bang,
             },
             Some(b'\'') => TokenKind::SingleQuote, // @Todo: Handle character literals.
@@ -158,7 +157,7 @@ impl<'src> Lexer<'src> {
                     self.next_char();
                     TokenKind::ModEq
                 }
-                None => TokenKind::EOF,
+                None => TokenKind::Eof,
                 _ => TokenKind::Percent,
             },
             Some(b'&') => match self.peek_next_char() {
@@ -170,7 +169,7 @@ impl<'src> Lexer<'src> {
                     self.next_char();
                     TokenKind::AndAnd
                 }
-                None => TokenKind::EOF,
+                None => TokenKind::Eof,
                 _ => TokenKind::Ampersand,
             },
             Some(b'*') => match self.peek_next_char() {
@@ -199,7 +198,7 @@ impl<'src> Lexer<'src> {
                         TokenKind::Ref
                     }
                 }
-                None => TokenKind::EOF,
+                None => TokenKind::Eof,
                 _ => TokenKind::Star,
             },
             Some(b'+') => match self.peek_next_char() {
@@ -207,7 +206,7 @@ impl<'src> Lexer<'src> {
                     self.next_char();
                     TokenKind::PlusEq
                 }
-                None => TokenKind::EOF,
+                None => TokenKind::Eof,
                 _ => TokenKind::Plus,
             },
             Some(b'-') => match self.peek_next_char() {
@@ -223,7 +222,7 @@ impl<'src> Lexer<'src> {
                     self.next_char();
                     self.parse_int_or_float_literal(self.character_cursor, true)
                 }
-                None => TokenKind::EOF,
+                None => TokenKind::Eof,
                 _ => TokenKind::Dash,
             },
             Some(b'.') => match self.peek_next_char() {
@@ -239,7 +238,7 @@ impl<'src> Lexer<'src> {
                     self.next_char();
                     TokenKind::Deref
                 }
-                None => TokenKind::EOF,
+                None => TokenKind::Eof,
                 _ => TokenKind::Dot,
             },
             Some(b'/') => match self.peek_next_char() {
@@ -247,7 +246,7 @@ impl<'src> Lexer<'src> {
                     self.next_char();
                     TokenKind::DivEq
                 }
-                None => TokenKind::EOF,
+                None => TokenKind::Eof,
                 _ => TokenKind::Slash,
             },
             Some(b'<') => match self.peek_next_char() {
@@ -262,11 +261,11 @@ impl<'src> Lexer<'src> {
                             self.next_char();
                             TokenKind::BitwiseShlEq
                         }
-                        None => TokenKind::EOF,
+                        None => TokenKind::Eof,
                         _ => TokenKind::BitwiseShl,
                     }
                 }
-                None => TokenKind::EOF,
+                None => TokenKind::Eof,
                 _ => TokenKind::LessThan,
             },
             Some(b'=') => match self.peek_next_char() {
@@ -278,7 +277,7 @@ impl<'src> Lexer<'src> {
                     self.next_char();
                     TokenKind::EqArrow
                 }
-                None => TokenKind::EOF,
+                None => TokenKind::Eof,
                 _ => TokenKind::Eq,
             },
             Some(b'>') => match self.peek_next_char() {
@@ -293,11 +292,11 @@ impl<'src> Lexer<'src> {
                             self.next_char();
                             TokenKind::BitwiseShrEq
                         }
-                        None => TokenKind::EOF,
+                        None => TokenKind::Eof,
                         _ => TokenKind::BitwiseShr,
                     }
                 }
-                None => TokenKind::EOF,
+                None => TokenKind::Eof,
                 _ => TokenKind::GreaterThan,
             },
             Some(b'^') => match self.peek_next_char() {
@@ -305,7 +304,7 @@ impl<'src> Lexer<'src> {
                     self.next_char();
                     TokenKind::BitwiseXorEq
                 }
-                None => TokenKind::EOF,
+                None => TokenKind::Eof,
                 _ => TokenKind::Caret,
             },
             Some(b'|') => match self.peek_next_char() {
@@ -317,7 +316,7 @@ impl<'src> Lexer<'src> {
                     self.next_char();
                     TokenKind::OrOr
                 }
-                None => TokenKind::EOF,
+                None => TokenKind::Eof,
                 _ => TokenKind::Bar,
             },
             Some(b'~') => match self.peek_next_char() {
@@ -325,7 +324,7 @@ impl<'src> Lexer<'src> {
                     self.next_char();
                     TokenKind::BitwiseNotEq
                 }
-                None => TokenKind::EOF,
+                None => TokenKind::Eof,
                 _ => TokenKind::Tilde,
             },
             Some(c) if c.is_ascii_alphabetic() || c == b'_' => {
@@ -360,13 +359,13 @@ impl<'src> Lexer<'src> {
             Some(b'?') => TokenKind::Question,
             Some(b'@') => TokenKind::At,
             Some(b'[') => TokenKind::OpenBracket,
-            Some(b'\\') => TokenKind::Backslash,
             Some(b']') => TokenKind::CloseBracket,
             Some(b'_') => TokenKind::Underscore,
             Some(b'`') => TokenKind::Backtick,
             Some(b'{') => TokenKind::OpenCurly,
             Some(b'}') => TokenKind::CloseCurly,
-            None => TokenKind::EOF,
+            Some(b'\\') => TokenKind::Backslash,
+            None => TokenKind::Eof,
             _ => TokenKind::ParseError,
         };
 
