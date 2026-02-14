@@ -40,6 +40,11 @@ pub enum TokenKind<'src> {
 
     // Keywords
     Fn,
+    Return,
+    For,
+    If,
+    Case,
+    Else,
 
     // Single character tokens
     Bang,         // !
@@ -219,7 +224,6 @@ impl<'src> Lexer<'src> {
                     TokenKind::Arrow
                 }
                 Some(c) if c.is_ascii_digit() || c == b'.' => {
-                    self.next_char();
                     self.parse_int_or_float_literal(self.character_cursor, true)
                 }
                 None => TokenKind::Eof,
@@ -227,7 +231,6 @@ impl<'src> Lexer<'src> {
             },
             Some(b'.') => match self.peek_next_char() {
                 Some(c) if c.is_ascii_digit() => {
-                    self.next_char();
                     self.parse_float_literal(self.character_cursor, false, 0)
                 }
                 Some(b'.') => {
@@ -343,11 +346,18 @@ impl<'src> Lexer<'src> {
                     "false" => TokenKind::BoolLiteral(false),
                     // Keywords
                     "fn" => TokenKind::Fn,
+                    "return" => TokenKind::Return,
+                    "for" => TokenKind::For,
+                    "if" => TokenKind::If,
+                    "case" => TokenKind::Case,
+                    "else" => TokenKind::Else,
                     _ => TokenKind::Ident(potential_identifier),
                 }
             }
             Some(c) if c.is_ascii_digit() => {
-                self.parse_int_or_float_literal(self.character_cursor, false)
+                // The -1 is to amend for the fact that we already advanced the `character_cursor`
+                // when we we encountered the first digit while calling `next_char()`.
+                self.parse_int_or_float_literal(self.character_cursor - 1, false)
             }
             Some(b'#') => TokenKind::Pound,
             Some(b'$') => TokenKind::Dollar,
