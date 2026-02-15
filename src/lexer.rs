@@ -33,7 +33,7 @@ pub enum TokenKind<'src> {
     // Literals
     StrLiteral(&'src str),
     CharLiteral(u8),
-    IntLiteral(u64),
+    IntLiteral(u128),
     FloatLiteral(f64),
     BoolLiteral(bool),
     // @Todo: Add hex, oct and bin literals; or merge them into `IntLiteral`.
@@ -223,14 +223,10 @@ impl<'src> Lexer<'src> {
                     self.next_char();
                     TokenKind::Arrow
                 }
-                Some(c) if c.is_ascii_digit() || c == b'.' => {
-                    self.parse_int_or_float_literal(self.character_cursor)
-                }
                 None => TokenKind::Eof,
                 _ => TokenKind::Dash,
             },
             Some(b'.') => match self.peek_next_char() {
-                Some(c) if c.is_ascii_digit() => self.parse_float_literal(self.character_cursor, 0),
                 Some(b'.') => {
                     self.next_char();
                     TokenKind::DotDot
@@ -239,6 +235,7 @@ impl<'src> Lexer<'src> {
                     self.next_char();
                     TokenKind::Deref
                 }
+                Some(c) if c.is_ascii_digit() => self.parse_int_or_float_literal(),
                 None => TokenKind::Eof,
                 _ => TokenKind::Dot,
             },
@@ -352,11 +349,7 @@ impl<'src> Lexer<'src> {
                     _ => TokenKind::Ident(potential_identifier),
                 }
             }
-            Some(c) if c.is_ascii_digit() => {
-                // The -1 is to amend for the fact that we already advanced the `character_cursor`
-                // when we we encountered the first digit while calling `next_char()`.
-                self.parse_int_or_float_literal(self.character_cursor - 1)
-            }
+            Some(c) if c.is_ascii_digit() => self.parse_int_or_float_literal(),
             Some(b'#') => TokenKind::Pound,
             Some(b'$') => TokenKind::Dollar,
             Some(b'(') => TokenKind::OpenParen,
@@ -437,71 +430,43 @@ impl<'src> Lexer<'src> {
         // @Todo: Handle block comments
     }
 
-    fn parse_int_or_float_literal(&mut self, token_start_pos: usize) -> TokenKind<'src> {
-        let mut value: u64 = 0;
+    fn parse_int_or_float_literal(&mut self) -> TokenKind<'src> {
+        // We already consumed the first character when calling `next_char()` at the match case. So,
+        // we need to step back a little.
+        self.character_cursor -= 1;
+
+        let mut buf = String::new();
+        let mut is_float = false;
 
         // We allow an indefinite amount of underscores inside int literals (for now);
         // even trailing underscores.
         while let Some(c) = self.peek_next_char()
-            && (c.is_ascii_digit() || c == b'_')
+            && (c.is_ascii_digit() || c == b'_' || c == b'.')
         {
             self.next_char();
-        }
 
-        let literal = &self.source[token_start_pos..self.character_cursor];
-
-        let mut factor = 1;
-        for d in literal.bytes().rev() {
-            if !d.is_ascii_digit() {
+            if c == b'_' {
                 continue;
             }
 
-            value += (d - b'0') as u64 * factor as u64;
-            factor *= 10;
+            if c == b'.' {
+                is_float = true;
+            }
+
+            buf.push(c as char);
         }
 
-        if self.peek_next_char() == Some(b'.') {
-            self.next_char();
-            self.parse_float_literal(self.character_cursor, value)
+        if is_float {
+            match buf.parse::<f64>() {
+                Ok(v) => TokenKind::FloatLiteral(v),
+                Err(_) => TokenKind::ParseError,
+            }
         } else {
-            TokenKind::IntLiteral(value)
-        }
-    }
-
-    fn parse_float_literal(
-        &mut self,
-        token_start_pos: usize,
-        integer_part: u64,
-    ) -> TokenKind<'src> {
-        //
-        // @Temp: This is an extremely naive implementation for parsing float literals and does
-        // not support formats like `1e-10`. Furthermore, it introduces the possibility of having
-        // precision errors.
-        //
-
-        let mut value = integer_part as f64;
-
-        // We allow an indefinite amount of underscores inside float literals (for now);
-        // even trailing underscores.
-        while let Some(c) = self.peek_next_char()
-            && (c.is_ascii_digit() || c == b'_')
-        {
-            self.next_char();
-        }
-
-        let literal = &self.source[token_start_pos..self.character_cursor];
-
-        let mut factor = 0.1;
-        for d in literal.bytes() {
-            if !d.is_ascii_digit() {
-                continue;
+            match buf.parse::<u128>() {
+                Ok(v) => TokenKind::IntLiteral(v),
+                Err(_) => TokenKind::ParseError,
             }
-
-            value += (d - b'0') as f64 * factor;
-            factor *= 0.1;
         }
-
-        TokenKind::FloatLiteral(value)
     }
 
     fn parse_str_literal(&mut self, token_start_pos: usize) -> TokenKind<'src> {
