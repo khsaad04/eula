@@ -31,7 +31,7 @@ pub enum TokenKind<'src> {
     Ident(&'src str),
 
     // Literals
-    StrLiteral(&'src str),
+    StrLiteral(String),
     CharLiteral(u8),
     IntLiteral(u128),
     FloatLiteral(f64),
@@ -470,16 +470,50 @@ impl<'src> Lexer<'src> {
     }
 
     fn parse_str_literal(&mut self, token_start_pos: usize) -> TokenKind<'src> {
-        // @Temp: Naive implementation to get this over with quickly.
-        // @Todo: Properly parse escape codes and everything.
+        let mut result = String::new();
 
         loop {
-            if self.next_char() == Some(b'"') {
-                break;
+            match self.next_char() {
+                Some(b'"') => break,
+                Some(b'\\') => match self.next_char() {
+                    Some(b'n') => result.push('\n'),
+                    Some(b'r') => result.push('\r'),
+                    Some(b't') => result.push('\t'),
+                    Some(b'\\') => result.push('\\'),
+                    Some(b'"') => result.push('"'),
+                    Some(b'x') => {
+                        let mut v: u8 = 0;
+                        for i in (0..2).rev() {
+                            match self.next_char() {
+                                Some(b'"') => return TokenKind::ParseError,
+                                Some(c) if c.is_ascii_hexdigit() => {
+                                    v |= ascii_to_hex(c) << (4 * i);
+                                }
+                                None => return TokenKind::Eof,
+                                _ => return TokenKind::ParseError,
+                            }
+                        }
+                        result.push(v as char);
+                    }
+                    Some(b'u') | Some(b'U') => {
+                        todo!("unicode code point support in string literals")
+                    }
+                    _ => return TokenKind::ParseError,
+                },
+                Some(c) => result.push(c as char),
+                None => return TokenKind::Eof,
             }
         }
 
-        // The -1 is to avoid pushing the trailing quotation mark into the string literal.
-        TokenKind::StrLiteral(&self.source[token_start_pos..self.character_cursor - 1])
+        TokenKind::StrLiteral(result)
+    }
+}
+
+fn ascii_to_hex(c: u8) -> u8 {
+    match c {
+        b'0'..=b'9' => c - b'0',
+        b'a'..=b'z' => c - b'a' + 10,
+        b'A'..=b'Z' => c - b'A' + 10,
+        _ => b'\0',
     }
 }
