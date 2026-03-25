@@ -17,7 +17,6 @@ pub struct Lexer<'src> {
 
 pub struct Token<'src> {
     pub kind: TokenKind<'src>,
-    pub source_path: &'src Path,
 
     pub l0: usize,
     pub c0: usize,
@@ -332,13 +331,14 @@ impl<'src> Lexer<'src> {
                     self.next_char();
                 }
 
-                let potential_identifier =
+                let ident_or_keyword =
                     &self.source[c0 + self.line_begin - 1..self.character_cursor];
 
-                match potential_identifier {
+                match ident_or_keyword {
                     // Booleans
                     "true" => TokenKind::BoolLiteral(true),
                     "false" => TokenKind::BoolLiteral(false),
+
                     // Keywords
                     "fn" => TokenKind::Fn,
                     "return" => TokenKind::Return,
@@ -346,7 +346,7 @@ impl<'src> Lexer<'src> {
                     "if" => TokenKind::If,
                     "case" => TokenKind::Case,
                     "else" => TokenKind::Else,
-                    _ => TokenKind::Ident(potential_identifier),
+                    _ => TokenKind::Ident(ident_or_keyword),
                 }
             }
             Some(c) if c.is_ascii_digit() => self.parse_int_or_float_literal(),
@@ -375,7 +375,6 @@ impl<'src> Lexer<'src> {
 
         Token {
             kind: token_kind,
-            source_path: self.source_path,
             l0,
             c0,
             l1,
@@ -487,7 +486,7 @@ impl<'src> Lexer<'src> {
                             match self.next_char() {
                                 Some(b'"') => return TokenKind::ParseError,
                                 Some(c) if c.is_ascii_hexdigit() => {
-                                    v |= ascii_to_hex(c) << (4 * i);
+                                    v |= ascii_to_hex_byte(c) << (4 * i);
                                 }
                                 None => return TokenKind::Eof,
                                 _ => return TokenKind::ParseError,
@@ -509,7 +508,7 @@ impl<'src> Lexer<'src> {
     }
 }
 
-fn ascii_to_hex(c: u8) -> u8 {
+fn ascii_to_hex_byte(c: u8) -> u8 {
     match c {
         b'0'..=b'9' => c - b'0',
         b'a'..=b'z' => c - b'a' + 10,
