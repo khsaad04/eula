@@ -51,7 +51,6 @@ pub enum TokenKind<'src> {
     Dollar,       // $
     Percent,      // %
     Ampersand,    // &
-    SingleQuote,  // '
     OpenParen,    // (
     CloseParen,   // )
     Star,         // *
@@ -154,7 +153,7 @@ impl<'src> Lexer<'src> {
                 None => TokenKind::Eof,
                 _ => TokenKind::Bang,
             },
-            Some(b'\'') => TokenKind::SingleQuote, // @Todo: Handle character literals.
+            Some(b'\'') => self.parse_char_literal(self.character_cursor),
             Some(b'"') => self.parse_str_literal(self.character_cursor),
             Some(b'%') => match self.peek_next_char() {
                 Some(b'=') => {
@@ -518,6 +517,42 @@ impl<'src> Lexer<'src> {
         }
 
         TokenKind::StrLiteral(result)
+    }
+
+    fn parse_char_literal(&mut self, token_start_pos: usize) -> TokenKind<'src> {
+        let mut result = 0_u8;
+
+        loop {
+            match self.next_char() {
+                Some(b'\'') => break,
+                Some(b'\\') => match self.next_char() {
+                    Some(b'n') => result = b'\n',
+                    Some(b'r') => result = b'\r',
+                    Some(b't') => result = b'\t',
+                    Some(b'\\') => result = b'\\',
+                    Some(b'\'') => result = b'"',
+                    Some(b'x') => {
+                        let mut v: u8 = 0;
+                        for i in (0..2).rev() {
+                            match self.next_char() {
+                                Some(b'"') => return TokenKind::ParseError,
+                                Some(c) if c.is_ascii_hexdigit() => {
+                                    v |= ascii_to_hex_byte(c) << (4 * i);
+                                }
+                                None => return TokenKind::Eof,
+                                _ => return TokenKind::ParseError,
+                            }
+                        }
+                        result = v;
+                    }
+                    _ => return TokenKind::ParseError,
+                },
+                Some(c) => result = c,
+                None => return TokenKind::Eof,
+            }
+        }
+
+        TokenKind::CharLiteral(result)
     }
 }
 
