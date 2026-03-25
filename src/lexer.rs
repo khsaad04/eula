@@ -422,11 +422,24 @@ impl<'src> Lexer<'src> {
                     self.next_char();
                 }
                 self.eat_whitespaces();
+            } else if self.source[self.character_cursor..].starts_with("/*") {
+                self.character_cursor += 2; // consume the leading `/*`
+                let mut depth_count = 1;
+                while let Some(c) = self.next_char()
+                    && depth_count > 0
+                {
+                    if c == b'*' && self.peek_next_char() == Some(b'/') {
+                        depth_count -= 1;
+                    } else if c == b'/' && self.peek_next_char() == Some(b'*') {
+                        depth_count += 1;
+                    }
+                }
+                self.eat_whitespaces();
+                // @Todo: Report error for unclosed nested block comments.
             } else {
                 break;
             }
         }
-        // @Todo: Handle block comments
     }
 
     fn parse_int_or_float_literal(&mut self) -> TokenKind<'src> {
