@@ -104,7 +104,7 @@ pub enum TokenKind<'src> {
     BitwiseXorEq, // ^=
 
     // @Todo: Provide more information about the error.
-    ParseError,
+    LexError,
     Eof,
 }
 
@@ -153,8 +153,8 @@ impl<'src> Lexer<'src> {
                 None => TokenKind::Eof,
                 _ => TokenKind::Bang,
             },
-            Some(b'\'') => self.parse_char_literal(self.character_cursor),
-            Some(b'"') => self.parse_str_literal(self.character_cursor),
+            Some(b'\'') => self.lex_char_literal(self.character_cursor),
+            Some(b'"') => self.lex_str_literal(self.character_cursor),
             Some(b'%') => match self.peek_next_char() {
                 Some(b'=') => {
                     self.next_char();
@@ -192,7 +192,7 @@ impl<'src> Lexer<'src> {
                         // here the `*` followed by `.` is not a referance because you can't take
                         // referance of an integer literal in this language. Instead, this is a
                         // binary multiplication of two floats. So, we leave the `.` untouched to
-                        // be parsed as part of the float literal the next time around.
+                        // be lexed as part of the float literal the next time around.
                         //
 
                         TokenKind::Star
@@ -233,7 +233,7 @@ impl<'src> Lexer<'src> {
                     self.next_char();
                     TokenKind::Deref
                 }
-                Some(c) if c.is_ascii_digit() => self.parse_int_or_float_literal(),
+                Some(c) if c.is_ascii_digit() => self.lex_int_or_float_literal(),
                 None => TokenKind::Eof,
                 _ => TokenKind::Dot,
             },
@@ -348,7 +348,7 @@ impl<'src> Lexer<'src> {
                     _ => TokenKind::Ident(ident_or_keyword),
                 }
             }
-            Some(c) if c.is_ascii_digit() => self.parse_int_or_float_literal(),
+            Some(c) if c.is_ascii_digit() => self.lex_int_or_float_literal(),
             Some(b'#') => TokenKind::Pound,
             Some(b'$') => TokenKind::Dollar,
             Some(b'(') => TokenKind::OpenParen,
@@ -366,7 +366,7 @@ impl<'src> Lexer<'src> {
             Some(b'}') => TokenKind::CloseCurly,
             Some(b'\\') => TokenKind::Backslash,
             None => TokenKind::Eof,
-            _ => TokenKind::ParseError,
+            _ => TokenKind::LexError,
         };
 
         let l1 = self.line_cursor + 1;
@@ -441,7 +441,7 @@ impl<'src> Lexer<'src> {
         }
     }
 
-    fn parse_int_or_float_literal(&mut self) -> TokenKind<'src> {
+    fn lex_int_or_float_literal(&mut self) -> TokenKind<'src> {
         // We already consumed the first character when calling `next_char()` at the match case. So,
         // we need to step back a little.
         self.character_cursor -= 1;
@@ -470,17 +470,17 @@ impl<'src> Lexer<'src> {
         if is_float {
             match buf.parse::<f64>() {
                 Ok(v) => TokenKind::FloatLiteral(v),
-                Err(_) => TokenKind::ParseError,
+                Err(_) => TokenKind::LexError,
             }
         } else {
             match buf.parse::<u128>() {
                 Ok(v) => TokenKind::IntLiteral(v),
-                Err(_) => TokenKind::ParseError,
+                Err(_) => TokenKind::LexError,
             }
         }
     }
 
-    fn parse_str_literal(&mut self, token_start_pos: usize) -> TokenKind<'src> {
+    fn lex_str_literal(&mut self, token_start_pos: usize) -> TokenKind<'src> {
         let mut result = String::new();
 
         loop {
@@ -496,12 +496,12 @@ impl<'src> Lexer<'src> {
                         let mut v: u8 = 0;
                         for i in (0..2).rev() {
                             match self.next_char() {
-                                Some(b'"') => return TokenKind::ParseError,
+                                Some(b'"') => return TokenKind::LexError,
                                 Some(c) if c.is_ascii_hexdigit() => {
                                     v |= ascii_to_hex_byte(c) << (4 * i);
                                 }
                                 None => return TokenKind::Eof,
-                                _ => return TokenKind::ParseError,
+                                _ => return TokenKind::LexError,
                             }
                         }
                         result.push(v as char);
@@ -509,7 +509,7 @@ impl<'src> Lexer<'src> {
                     Some(b'u') | Some(b'U') => {
                         todo!("unicode code point support in string literals")
                     }
-                    _ => return TokenKind::ParseError,
+                    _ => return TokenKind::LexError,
                 },
                 Some(c) => result.push(c as char),
                 None => return TokenKind::Eof,
@@ -519,7 +519,7 @@ impl<'src> Lexer<'src> {
         TokenKind::StrLiteral(result)
     }
 
-    fn parse_char_literal(&mut self, token_start_pos: usize) -> TokenKind<'src> {
+    fn lex_char_literal(&mut self, token_start_pos: usize) -> TokenKind<'src> {
         let mut result = 0_u8;
 
         loop {
@@ -535,17 +535,17 @@ impl<'src> Lexer<'src> {
                         let mut v: u8 = 0;
                         for i in (0..2).rev() {
                             match self.next_char() {
-                                Some(b'"') => return TokenKind::ParseError,
+                                Some(b'"') => return TokenKind::LexError,
                                 Some(c) if c.is_ascii_hexdigit() => {
                                     v |= ascii_to_hex_byte(c) << (4 * i);
                                 }
                                 None => return TokenKind::Eof,
-                                _ => return TokenKind::ParseError,
+                                _ => return TokenKind::LexError,
                             }
                         }
                         result = v;
                     }
-                    _ => return TokenKind::ParseError,
+                    _ => return TokenKind::LexError,
                 },
                 Some(c) => result = c,
                 None => return TokenKind::Eof,
