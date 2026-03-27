@@ -32,10 +32,9 @@ pub enum TokenKind<'src> {
     // Literals
     StrLiteral(String),
     CharLiteral(u8),
-    IntLiteral(u128),
+    IntLiteral(i128),
     FloatLiteral(f64),
     BoolLiteral(bool),
-    // @Todo: Add hex, oct and bin literals; or merge them into `IntLiteral`.
 
     // Keywords
     Fn,
@@ -233,7 +232,12 @@ impl<'src> Lexer<'src> {
                     self.next_char();
                     TokenKind::Deref
                 }
-                Some(c) if c.is_ascii_digit() => self.lex_int_or_float_literal(),
+                Some(c) if c.is_ascii_digit() => {
+                    // We already consumed the first character when calling `next_char()`.
+                    // So, we need to step back a little.
+                    self.character_cursor -= 1;
+                    self.lex_num_literal()
+                }
                 None => TokenKind::Eof,
                 _ => TokenKind::Dot,
             },
@@ -348,7 +352,12 @@ impl<'src> Lexer<'src> {
                     _ => TokenKind::Ident(ident_or_keyword),
                 }
             }
-            Some(c) if c.is_ascii_digit() => self.lex_int_or_float_literal(),
+            Some(c) if c.is_ascii_digit() => {
+                // We already consumed the first character when calling `next_char()`.
+                // So, we need to step back a little.
+                self.character_cursor -= 1;
+                self.lex_num_literal()
+            }
             Some(b'#') => TokenKind::Pound,
             Some(b'$') => TokenKind::Dollar,
             Some(b'(') => TokenKind::OpenParen,
@@ -441,39 +450,60 @@ impl<'src> Lexer<'src> {
         }
     }
 
-    fn lex_int_or_float_literal(&mut self) -> TokenKind<'src> {
-        // We already consumed the first character when calling `next_char()` at the match case. So,
-        // we need to step back a little.
-        self.character_cursor -= 1;
-
+    fn lex_num_literal(&mut self) -> TokenKind<'src> {
         let mut buf = String::new();
+
+        let base: u32 = if let Some(c) = self.peek_next_char()
+            && c == b'0'
+        {
+            self.next_char();
+            match self.peek_next_char() {
+                Some(b'x') => {
+                    self.next_char();
+                    16
+                }
+                Some(b'o') => {
+                    self.next_char();
+                    8
+                }
+                Some(b'b') => {
+                    self.next_char();
+                    2
+                }
+                _ => 10,
+            }
+        } else {
+            10
+        };
+
         let mut is_float = false;
 
         // We allow an indefinite amount of underscores inside int literals (for now);
         // even trailing underscores.
         while let Some(c) = self.peek_next_char()
             && (c.is_ascii_digit() || c == b'_' || c == b'.')
+            && !is_float
         {
             self.next_char();
-
             if c == b'_' {
                 continue;
             }
-
             if c == b'.' {
                 is_float = true;
             }
-
             buf.push(c as char);
         }
 
         if is_float {
+            if base != 10 {
+                return TokenKind::LexError;
+            }
             match buf.parse::<f64>() {
                 Ok(v) => TokenKind::FloatLiteral(v),
                 Err(_) => TokenKind::LexError,
             }
         } else {
-            match buf.parse::<u128>() {
+            match i128::from_str_radix(&buf, base) {
                 Ok(v) => TokenKind::IntLiteral(v),
                 Err(_) => TokenKind::LexError,
             }
