@@ -152,8 +152,8 @@ impl<'src> Lexer<'src> {
                 None => TokenKind::Eof,
                 _ => TokenKind::Bang,
             },
-            Some(b'\'') => self.lex_char_literal(self.character_cursor),
-            Some(b'"') => self.lex_str_literal(self.character_cursor),
+            Some(b'\'') => self.lex_char_literal(),
+            Some(b'"') => self.lex_str_literal(),
             Some(b'%') => match self.peek_next_char() {
                 Some(b'=') => {
                     self.next_char();
@@ -436,14 +436,16 @@ impl<'src> Lexer<'src> {
                 while let Some(c) = self.next_char()
                     && depth_count > 0
                 {
-                    if c == b'*' && self.peek_next_char() == Some(b'/') {
+                    if c == b'\n' {
+                        self.line_cursor += 1;
+                        self.line_begin = self.character_cursor;
+                    } else if c == b'*' && self.peek_next_char() == Some(b'/') {
                         depth_count -= 1;
                     } else if c == b'/' && self.peek_next_char() == Some(b'*') {
                         depth_count += 1;
                     }
                 }
                 self.eat_whitespaces();
-                // @Todo: Report error for unclosed nested block comments.
             } else {
                 break;
             }
@@ -510,13 +512,14 @@ impl<'src> Lexer<'src> {
         }
     }
 
-    fn lex_str_literal(&mut self, token_start_pos: usize) -> TokenKind<'src> {
+    fn lex_str_literal(&mut self) -> TokenKind<'src> {
         let mut result = String::new();
 
-        loop {
-            match self.next_char() {
-                Some(b'"') => break,
-                Some(b'\\') => match self.next_char() {
+        while let Some(c) = self.next_char()
+            && c != b'"'
+        {
+            match c {
+                b'\\' => match self.next_char() {
                     Some(b'n') => result.push('\n'),
                     Some(b'r') => result.push('\r'),
                     Some(b't') => result.push('\t'),
@@ -524,52 +527,48 @@ impl<'src> Lexer<'src> {
                     Some(b'"') => result.push('"'),
                     Some(b'x') => {
                         let mut v: u8 = 0;
-                        for i in (0..2).rev() {
+                        for i in (0..=1).rev() {
                             match self.next_char() {
-                                Some(b'"') => return TokenKind::LexError,
                                 Some(c) if c.is_ascii_hexdigit() => {
                                     v |= ascii_to_hex_byte(c) << (4 * i);
                                 }
-                                None => return TokenKind::Eof,
                                 _ => return TokenKind::LexError,
                             }
                         }
                         result.push(v as char);
                     }
                     Some(b'u') | Some(b'U') => {
-                        todo!("unicode code point support in string literals")
+                        todo!("Unicode code point support in string literals")
                     }
                     _ => return TokenKind::LexError,
                 },
-                Some(c) => result.push(c as char),
-                None => return TokenKind::Eof,
+                _ => result.push(c as char),
             }
         }
 
         TokenKind::StrLiteral(result)
     }
 
-    fn lex_char_literal(&mut self, token_start_pos: usize) -> TokenKind<'src> {
+    fn lex_char_literal(&mut self) -> TokenKind<'src> {
         let mut result = 0_u8;
 
-        loop {
-            match self.next_char() {
-                Some(b'\'') => break,
-                Some(b'\\') => match self.next_char() {
+        while let Some(c) = self.next_char()
+            && c != b'\''
+        {
+            match c {
+                b'\\' => match self.next_char() {
                     Some(b'n') => result = b'\n',
                     Some(b'r') => result = b'\r',
                     Some(b't') => result = b'\t',
                     Some(b'\\') => result = b'\\',
-                    Some(b'\'') => result = b'"',
+                    Some(b'\'') => result = b'\'',
                     Some(b'x') => {
                         let mut v: u8 = 0;
-                        for i in (0..2).rev() {
+                        for i in (0..=1).rev() {
                             match self.next_char() {
-                                Some(b'"') => return TokenKind::LexError,
                                 Some(c) if c.is_ascii_hexdigit() => {
                                     v |= ascii_to_hex_byte(c) << (4 * i);
                                 }
-                                None => return TokenKind::Eof,
                                 _ => return TokenKind::LexError,
                             }
                         }
@@ -577,8 +576,7 @@ impl<'src> Lexer<'src> {
                     }
                     _ => return TokenKind::LexError,
                 },
-                Some(c) => result = c,
-                None => return TokenKind::Eof,
+                _ => result = c,
             }
         }
 
@@ -591,6 +589,6 @@ fn ascii_to_hex_byte(c: u8) -> u8 {
         b'0'..=b'9' => c - b'0',
         b'a'..=b'z' => c - b'a' + 10,
         b'A'..=b'Z' => c - b'A' + 10,
-        _ => b'\0',
+        _ => 0,
     }
 }
