@@ -9,10 +9,6 @@ pub struct Lexer<'src> {
     character_cursor: usize,
     line_cursor: usize,
     line_begin: usize,
-
-    // For now we only store upto a maximum of 1 token for lookahead.
-    // In the future this might turn into `[Option<Token<'src>>;n]`.
-    token_buffer: Option<Token<'src>>,
 }
 
 pub struct Token<'src> {
@@ -116,27 +112,10 @@ impl<'src> Lexer<'src> {
             character_cursor: 0,
             line_cursor: 0,
             line_begin: 0,
-
-            token_buffer: None,
         }
     }
 
     pub fn next_token(&mut self) -> Token<'src> {
-        if let Some(token) = self.token_buffer.take() {
-            token
-        } else {
-            self.advance_token()
-        }
-    }
-
-    pub fn peek_next_token(&mut self) -> &Token<'src> {
-        if self.token_buffer.is_none() {
-            self.token_buffer = Some(self.advance_token());
-        }
-        self.token_buffer.as_ref().unwrap()
-    }
-
-    fn advance_token(&mut self) -> Token<'src> {
         self.eat_whitespaces();
         self.eat_comments();
 
