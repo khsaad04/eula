@@ -15,18 +15,13 @@ fn main() {
     let input_path = input_path.unwrap();
     let input_string = fs::read_to_string(&input_path).unwrap();
 
-    let mut lex = lexer::Lexer::new(&input_string, &input_path);
+    let mut lex = lexer::Lexer::new(&input_string);
     while let token = lex.next_token()
         && token.kind != lexer::TokenKind::Eof
     {
         println!(
-            "{}:{:>2}:{:>2} -> {:>2}:{:>2}: {:?}",
-            lex.source_path.display(),
-            token.l0,
-            token.c0,
-            token.l1,
-            token.c1,
-            token.kind
+            "{:>2}:{:>2} -> {:>2}:{:>2}: {:?}",
+            token.r0, token.c0, token.r1, token.c1, token.kind
         );
     }
 }
