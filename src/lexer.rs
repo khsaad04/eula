@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 pub struct Lexer<'src> {
     // Read-only
     src: &'src str,
@@ -6,6 +8,11 @@ pub struct Lexer<'src> {
     char_offset: usize,
     line_offset: usize,
     beginning_of_line: usize,
+
+    // Lookahead
+    tokens_buffer: Vec<Token<'src>>,
+    token_offset: usize,
+    lookahead_offset: usize,
 }
 
 pub struct Token<'src> {
@@ -69,17 +76,17 @@ pub enum TokenKind<'src> {
     BitwiseShlEq, // <<=
     BitwiseShrEq, // >>=
 
-    LogicalAnd,  // &&
-    LogicalOr,   // ||
-    EqEq,        // ==
-    LessThan,    // <
-    GreaterThan, // >
     Eq,          // =
     Not,         // !
+    LessThan,    // <
+    GreaterThan, // >
 
-    NotEq,     // !=
-    LessEq,    // <=
-    GreaterEq, // >=
+    EqEq,       // ==
+    NotEq,      // !=
+    LessEq,     // <=
+    GreaterEq,  // >=
+    LogicalAnd, // &&
+    LogicalOr,  // ||
 
     Dot,       // .
     Comma,     // ,
@@ -112,10 +119,35 @@ impl<'src> Lexer<'src> {
             char_offset: 0,
             line_offset: 0,
             beginning_of_line: 0,
+
+            tokens_buffer: vec![],
+            token_offset: 0,
+            lookahead_offset: 0,
         }
     }
 
-    pub fn next_token(&mut self) -> Token<'src> {
+    pub fn next_token(&mut self) -> &Token<'src> {
+        if self.token_offset >= self.tokens_buffer.len() {
+            self.advance_token();
+        }
+        let result = &self.tokens_buffer[self.token_offset];
+        self.token_offset += 1;
+        result
+    }
+
+    pub fn peek_next_token(&mut self) -> &Token<'src> {
+        self.peek_token(1)
+    }
+
+    pub fn peek_token(&mut self, lookahead: usize) -> &Token<'src> {
+        for _ in 0..(self.lookahead_offset + lookahead - self.token_offset) {
+            self.advance_token();
+        }
+        self.lookahead_offset += lookahead;
+        &self.tokens_buffer[self.lookahead_offset - 1]
+    }
+
+    fn advance_token(&mut self) {
         self.eat_whitespaces();
         self.eat_comments();
 
@@ -159,7 +191,7 @@ impl<'src> Lexer<'src> {
                     TokenKind::MulEq
                 }
                 Some(b'.') => {
-                    if let Some(c) = self.peek_char(1)
+                    if let Some(c) = self.peek_char(2)
                         && c.is_ascii_digit()
                     {
                         //
@@ -356,13 +388,13 @@ impl<'src> Lexer<'src> {
         let r1 = self.line_offset + 1;
         let c1 = self.char_offset - self.beginning_of_line;
 
-        Token {
+        self.tokens_buffer.push(Token {
             kind: token_kind,
             r0,
             c0,
             r1,
             c1,
-        }
+        });
     }
 
     fn next_char(&mut self) -> Option<u8> {
@@ -378,13 +410,13 @@ impl<'src> Lexer<'src> {
     }
 
     fn peek_next_char(&mut self) -> Option<u8> {
-        self.peek_char(0)
+        self.peek_char(1)
     }
 
     fn peek_char(&mut self, lookahead: usize) -> Option<u8> {
         self.src
             .as_bytes()
-            .get(self.char_offset + lookahead)
+            .get(self.char_offset + lookahead - 1)
             .copied()
     }
 
@@ -454,7 +486,7 @@ impl<'src> Lexer<'src> {
         if let Some(c) = self.peek_next_char()
             && c == b'0'
         {
-            match self.peek_char(1) {
+            match self.peek_char(2) {
                 Some(b'x') => {
                     self.next_char();
                     self.next_char();
