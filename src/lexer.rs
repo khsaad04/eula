@@ -1,53 +1,40 @@
 #![allow(dead_code)]
 
-pub struct Lexer<'src> {
-    // Read-only
-    src: &'src str,
+use std::{io::IsTerminal, path::Path};
 
-    // Mutable state
-    char_offset: usize,
+#[derive(Debug)]
+pub struct Lexer<'a> {
+    input: &'a str,
+    input_path: &'a Path,
+
+    character_offset: usize,
     line_offset: usize,
-    beginning_of_line: usize,
+    first_character_of_line_offset: usize,
 
-    // Lookahead
-    tokens_buffer: Vec<Token<'src>>,
-    token_offset: usize,
-    lookahead_offset: usize,
+    tokens_buffer: Vec<Token<'a>>,
+    current_token_offset: usize,
+    lookahead_token_offset: usize,
 }
 
-pub struct Token<'src> {
-    pub kind: TokenKind<'src>,
-
-    // Location in terms of row and col
-    pub r0: usize,
-    pub c0: usize,
-
-    pub r1: usize,
-    pub c1: usize,
+#[derive(Debug)]
+pub struct Token<'a> {
+    pub kind: TokenKind<'a>,
+    pub loc: Location<'a>,
 }
 
 #[derive(Debug, PartialEq)]
-pub enum TokenKind<'src> {
+pub enum TokenKind<'a> {
     // Literals
-    Ident(&'src str),
+    Ident(&'a str),
     StrLiteral(String),
     CharLiteral(u8),
-    IntLiteral(i128),
+    IntLiteral(u128),
     FloatLiteral(f64),
     BoolLiteral(bool),
 
     // Keywords
     Fn,
     Return,
-    Defer,
-
-    For,
-    Break,
-    Continue,
-
-    If,
-    Else,
-    Case,
 
     // Operators
     Add, // +
@@ -111,60 +98,110 @@ pub enum TokenKind<'src> {
     Eof,
 }
 
-impl<'src> Lexer<'src> {
-    pub fn new(src: &'src str) -> Self {
+#[derive(Debug, Clone, Copy)]
+pub struct Location<'a> {
+    pub input_path: &'a Path,
+
+    pub l0: usize,
+    pub c0: usize,
+
+    pub l1: usize,
+    pub c1: usize,
+}
+
+impl<'a> Lexer<'a> {
+    pub fn new(input: &'a str, input_path: &'a Path) -> Self {
         Self {
-            src,
+            input,
+            input_path,
 
-            char_offset: 0,
+            character_offset: 0,
             line_offset: 0,
-            beginning_of_line: 0,
+            first_character_of_line_offset: 0,
 
+            // @Speedup: Reserve some amount of capacity by default to
+            // avoid re-allocation in the beginning.
             tokens_buffer: vec![],
-            token_offset: 0,
-            lookahead_offset: 0,
+            current_token_offset: 0,
+            lookahead_token_offset: 0,
         }
     }
 
-    pub fn next_token(&mut self) -> &Token<'src> {
-        if self.token_offset >= self.tokens_buffer.len() {
+    pub fn next_token(&mut self) -> &Token<'a> {
+        if self.current_token_offset >= self.tokens_buffer.len() {
             self.advance_token();
         }
-        let result = &self.tokens_buffer[self.token_offset];
-        self.token_offset += 1;
+        let result = &self.tokens_buffer[self.current_token_offset];
+        self.current_token_offset += 1;
         result
     }
 
-    pub fn peek_next_token(&mut self) -> &Token<'src> {
+    pub fn peek_next_token(&mut self) -> &Token<'a> {
         self.peek_token(1)
     }
 
-    pub fn peek_token(&mut self, lookahead: usize) -> &Token<'src> {
-        for _ in 0..(self.lookahead_offset + lookahead - self.token_offset) {
+    pub fn peek_token(&mut self, lookahead: usize) -> &Token<'a> {
+        for _ in 0..(self.lookahead_token_offset + lookahead - self.current_token_offset) {
             self.advance_token();
         }
-        self.lookahead_offset += lookahead;
-        &self.tokens_buffer[self.lookahead_offset - 1]
+        self.lookahead_token_offset += lookahead;
+        &self.tokens_buffer[self.lookahead_token_offset - 1]
+    }
+
+    pub fn error_at(&self, loc: Location, desc: &str) {
+        let is_tty = std::io::stdout().is_terminal();
+        let (cyan, red, reset) = if is_tty {
+            ("\x1b[36m", "\x1b[31m", "\x1b[0m")
+        } else {
+            ("", "", "")
+        };
+
+        eprintln!(
+            "{}:{}:{}: error: {}",
+            loc.input_path.display(),
+            loc.l0 + 1,
+            loc.c0 + 1,
+            desc
+        );
+
+        eprintln!();
+        if loc.l0 > 0 {
+            eprintln!(
+                "{} | {cyan}{}{reset}",
+                loc.l0,
+                &self.input.lines().nth(loc.l0 - 1).unwrap()
+            );
+        }
+        let current_line = &self.input.lines().nth(loc.l0).unwrap();
+        eprintln!(
+            "{} | {cyan}{}{reset}{red}{}{reset}{cyan}{}{reset}",
+            loc.l0 + 1,
+            &current_line[..loc.c0],
+            &current_line[loc.c0..loc.c1+1],
+            &current_line[loc.c1+1..],
+        );
+        if loc.l1 < self.input.lines().into_iter().count() - 1 {
+            eprintln!(
+                "{} | {cyan}{}{reset}",
+                loc.l0 + 2,
+                &self.input.lines().nth(loc.l1 + 1).unwrap()
+            );
+        }
+        eprintln!();
     }
 
     fn advance_token(&mut self) {
         self.eat_whitespaces();
         self.eat_comments();
 
-        let r0 = self.line_offset + 1;
-        let c0 = self.char_offset - self.beginning_of_line + 1;
+        let l0 = self.line_offset;
+        let c0 = self.character_offset - self.first_character_of_line_offset;
 
         let token_kind = match self.next_char() {
             Some(b'+') => match self.peek_next_char() {
                 Some(b'=') => {
                     self.next_char();
                     TokenKind::AddEq
-                }
-                Some(c) if c.is_ascii_digit() => {
-                    // We already consumed the `+` when calling `next_char()`.
-                    // So, we need to step back a little.
-                    self.char_offset -= 1;
-                    self.lex_num_literal()
                 }
                 _ => TokenKind::Add,
             },
@@ -176,12 +213,6 @@ impl<'src> Lexer<'src> {
                 Some(b'>') => {
                     self.next_char();
                     TokenKind::Arrow
-                }
-                Some(c) if c.is_ascii_digit() => {
-                    // We already consumed the `-` when calling `next_char()`.
-                    // So, we need to step back a little.
-                    self.char_offset -= 1;
-                    self.lex_num_literal()
                 }
                 _ => TokenKind::Sub,
             },
@@ -327,7 +358,7 @@ impl<'src> Lexer<'src> {
                     Some(c) if c.is_ascii_digit() => {
                         // We already consumed the `.` when calling `next_char()`.
                         // So, we need to step back a little.
-                        self.char_offset -= 1;
+                        self.character_offset -= 1;
                         self.lex_num_literal()
                     }
                     _ => TokenKind::Dot,
@@ -351,60 +382,61 @@ impl<'src> Lexer<'src> {
                     self.next_char();
                 }
 
-                let ident_or_keyword = &self.src[c0 + self.beginning_of_line - 1..self.char_offset];
+                let ident_or_keyword =
+                    &self.input[c0 + self.first_character_of_line_offset..self.character_offset];
 
                 match ident_or_keyword {
                     // Booleans
                     "true" => TokenKind::BoolLiteral(true),
                     "false" => TokenKind::BoolLiteral(false),
 
-                    // Float literal
-                    "inf" => TokenKind::FloatLiteral("inf".parse::<f64>().unwrap()), // Unwrapping here is fine because parsing these should
-                    "nan" => TokenKind::FloatLiteral("nan".parse::<f64>().unwrap()), // never fail unless something went very wrong.
+                    // Float literals
+                    "inf" => TokenKind::FloatLiteral(f64::NAN),
+                    "nan" => TokenKind::FloatLiteral(f64::INFINITY),
 
                     // Keywords
                     "fn" => TokenKind::Fn,
                     "return" => TokenKind::Return,
-                    "defer" => TokenKind::Defer,
-                    "for" => TokenKind::For,
-                    "break" => TokenKind::Break,
-                    "continue" => TokenKind::Continue,
-                    "if" => TokenKind::If,
-                    "else" => TokenKind::Else,
-                    "case" => TokenKind::Case,
+
                     _ => TokenKind::Ident(ident_or_keyword),
                 }
             }
             Some(c) if c.is_ascii_digit() => {
                 // We already consumed the first digit when calling `next_char()`.
                 // So, we need to step back a little.
-                self.char_offset -= 1;
+                self.character_offset -= 1;
                 self.lex_num_literal()
             }
             None => TokenKind::Eof,
             _ => TokenKind::LexError,
         };
 
-        let r1 = self.line_offset + 1;
-        let c1 = self.char_offset - self.beginning_of_line;
+        let l1 = self.line_offset;
+        let c1 = self.character_offset - self.first_character_of_line_offset - 1;
+
+        assert!(l0 <= l1);
+        assert!(c0 <= c1);
 
         self.tokens_buffer.push(Token {
             kind: token_kind,
-            r0,
-            c0,
-            r1,
-            c1,
+            loc: Location {
+                input_path: self.input_path,
+                l0,
+                c0,
+                l1,
+                c1,
+            },
         });
     }
 
     fn next_char(&mut self) -> Option<u8> {
         let result = self.peek_next_char();
-        self.char_offset += 1;
+        self.character_offset += 1;
         if let Some(c) = result
             && c == b'\n'
         {
             self.line_offset += 1;
-            self.beginning_of_line = self.char_offset;
+            self.first_character_of_line_offset = self.character_offset;
         }
         result
     }
@@ -414,9 +446,9 @@ impl<'src> Lexer<'src> {
     }
 
     fn peek_char(&mut self, lookahead: usize) -> Option<u8> {
-        self.src
+        self.input
             .as_bytes()
-            .get(self.char_offset + lookahead - 1)
+            .get(self.character_offset + lookahead - 1)
             .copied()
     }
 
@@ -430,7 +462,7 @@ impl<'src> Lexer<'src> {
 
     fn eat_comments(&mut self) {
         loop {
-            if self.src[self.char_offset..].starts_with("//") {
+            if self.input[self.character_offset..].starts_with("//") {
                 // eat the leading `//`
                 self.next_char();
                 self.next_char();
@@ -440,7 +472,7 @@ impl<'src> Lexer<'src> {
                 {
                     self.next_char();
                 }
-            } else if self.src[self.char_offset..].starts_with("/*") {
+            } else if self.input[self.character_offset..].starts_with("/*") {
                 // eat the leading `/*`
                 self.next_char();
                 self.next_char();
@@ -468,20 +500,13 @@ impl<'src> Lexer<'src> {
         }
     }
 
-    fn lex_num_literal(&mut self) -> TokenKind<'src> {
+    fn lex_num_literal(&mut self) -> TokenKind<'a> {
         let mut result = String::new();
 
         let mut base = 10;
         let mut float = false;
         let mut exp = false;
         let mut exp_sign = false;
-
-        if let Some(c) = self.peek_next_char()
-            && (c == b'-' || c == b'+')
-        {
-            result.push(c as char);
-            self.next_char();
-        }
 
         if let Some(c) = self.peek_next_char()
             && c == b'0'
@@ -561,14 +586,14 @@ impl<'src> Lexer<'src> {
                 Err(_) => TokenKind::LexError,
             }
         } else {
-            match i128::from_str_radix(&result, base) {
+            match u128::from_str_radix(&result, base) {
                 Ok(v) => TokenKind::IntLiteral(v),
                 Err(_) => TokenKind::LexError,
             }
         }
     }
 
-    fn lex_str_literal(&mut self) -> TokenKind<'src> {
+    fn lex_str_literal(&mut self) -> TokenKind<'a> {
         let mut result = String::new();
 
         while let Some(c) = self.next_char()
@@ -607,7 +632,7 @@ impl<'src> Lexer<'src> {
         TokenKind::StrLiteral(result)
     }
 
-    fn lex_char_literal(&mut self) -> TokenKind<'src> {
+    fn lex_char_literal(&mut self) -> TokenKind<'a> {
         let mut result = 0_u8;
 
         while let Some(c) = self.next_char()

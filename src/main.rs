@@ -1,6 +1,6 @@
 mod lexer;
 
-use std::{fs, process::exit};
+use std::{fs, path::Path, process::exit};
 
 fn main() {
     let mut args = std::env::args();
@@ -13,15 +13,24 @@ fn main() {
     }
 
     let input_path = input_path.unwrap();
-    let input_string = fs::read_to_string(&input_path).unwrap();
+    let input = fs::read_to_string(&input_path).unwrap();
 
-    let mut lex = lexer::Lexer::new(&input_string);
+    let mut lex = lexer::Lexer::new(&input, Path::new(&input_path));
+
+    let token1 = lex.peek_token(8);
+    let loc = token1.loc.clone();
+    lex.error_at(loc, "ERROR REPORTING TEST");
+
     while let token = lex.next_token()
         && token.kind != lexer::TokenKind::Eof
     {
         println!(
             "{:>2}:{:>2} -> {:>2}:{:>2}: {:?}",
-            token.r0, token.c0, token.r1, token.c1, token.kind
+            token.loc.l0 + 1,
+            token.loc.c0 + 1,
+            token.loc.l1 + 1,
+            token.loc.c1 + 1,
+            token.kind
         );
     }
 }
