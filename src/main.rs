@@ -18,14 +18,15 @@ fn main() {
     let mut lex = lexer::Lexer::new(&input, Path::new(&input_path));
 
     let token1 = lex.peek_token(8);
-    let loc = token1.loc.clone();
+    let loc = token1.loc;
     lex.error_at(loc, "ERROR REPORTING TEST");
 
     while let token = lex.next_token()
         && token.kind != lexer::TokenKind::Eof
     {
         println!(
-            "{:>2}:{:>2} -> {:>2}:{:>2}: {:?}",
+            "{}:{:>2}:{:>2} -> {:>2}:{:>2}: {:?}",
+            token.loc.input_path.display(),
             token.loc.l0 + 1,
             token.loc.c0 + 1,
             token.loc.l1 + 1,

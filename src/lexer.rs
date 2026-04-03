@@ -1,15 +1,18 @@
 #![allow(dead_code)]
 
-use std::{io::IsTerminal, path::Path};
+use std::{io::IsTerminal, path::Path, str::Chars};
 
 #[derive(Debug)]
 pub struct Lexer<'a> {
+    // Read-only data
     input: &'a str,
     input_path: &'a Path,
 
-    character_offset: usize,
-    line_offset: usize,
-    first_character_of_line_offset: usize,
+    // Lexing state
+    chars_iter: Chars<'a>,
+    char_index: usize,
+    line_index: usize,
+    line_start: usize,
 
     tokens_buffer: Vec<Token<'a>>,
     current_token_offset: usize,
@@ -18,14 +21,14 @@ pub struct Lexer<'a> {
 
 #[derive(Debug)]
 pub struct Token<'a> {
-    pub kind: TokenKind<'a>,
+    pub kind: TokenKind,
     pub loc: Location<'a>,
 }
 
 #[derive(Debug, PartialEq)]
-pub enum TokenKind<'a> {
+pub enum TokenKind {
     // Literals
-    Ident(&'a str),
+    Ident(String),
     StrLiteral(String),
     CharLiteral(u8),
     IntLiteral(u128),
@@ -115,9 +118,10 @@ impl<'a> Lexer<'a> {
             input,
             input_path,
 
-            character_offset: 0,
-            line_offset: 0,
-            first_character_of_line_offset: 0,
+            chars_iter: input.chars(),
+            char_index: 0,
+            line_index: 0,
+            line_start: 0,
 
             // @Speedup: Reserve some amount of capacity by default to
             // avoid re-allocation in the beginning.
@@ -165,28 +169,22 @@ impl<'a> Lexer<'a> {
         );
 
         eprintln!();
-        if loc.l0 > 0 {
-            eprintln!(
-                "{} | {cyan}{}{reset}",
-                loc.l0,
-                &self.input.lines().nth(loc.l0 - 1).unwrap()
-            );
+
+        if let Some(line) = &self.input.lines().nth(loc.l0 - 1) {
+            eprintln!("{} | {cyan}{}{reset}", loc.l0, line,);
         }
         let current_line = &self.input.lines().nth(loc.l0).unwrap();
         eprintln!(
             "{} | {cyan}{}{reset}{red}{}{reset}{cyan}{}{reset}",
             loc.l0 + 1,
             &current_line[..loc.c0],
-            &current_line[loc.c0..loc.c1+1],
-            &current_line[loc.c1+1..],
+            &current_line[loc.c0..loc.c1 + 1],
+            &current_line[loc.c1 + 1..],
         );
-        if loc.l1 < self.input.lines().into_iter().count() - 1 {
-            eprintln!(
-                "{} | {cyan}{}{reset}",
-                loc.l0 + 2,
-                &self.input.lines().nth(loc.l1 + 1).unwrap()
-            );
+        if let Some(line) = &self.input.lines().nth(loc.l0 + 1) {
+            eprintln!("{} | {cyan}{}{reset}", loc.l0 + 2, line,);
         }
+
         eprintln!();
     }
 
@@ -194,198 +192,22 @@ impl<'a> Lexer<'a> {
         self.eat_whitespaces();
         self.eat_comments();
 
-        let l0 = self.line_offset;
-        let c0 = self.character_offset - self.first_character_of_line_offset;
+        let l0 = self.line_index;
+        let c0 = self.char_index - self.line_start;
 
-        let token_kind = match self.next_char() {
-            Some(b'+') => match self.peek_next_char() {
-                Some(b'=') => {
-                    self.next_char();
-                    TokenKind::AddEq
-                }
-                _ => TokenKind::Add,
-            },
-            Some(b'-') => match self.peek_next_char() {
-                Some(b'=') => {
-                    self.next_char();
-                    TokenKind::SubEq
-                }
-                Some(b'>') => {
-                    self.next_char();
-                    TokenKind::Arrow
-                }
-                _ => TokenKind::Sub,
-            },
-            Some(b'*') => match self.peek_next_char() {
-                Some(b'=') => {
-                    self.next_char();
-                    TokenKind::MulEq
-                }
-                Some(b'.') => {
-                    if let Some(c) = self.peek_char(2)
-                        && c.is_ascii_digit()
-                    {
-                        //
-                        // This implies that there might be a float literal after the `*`
-                        //
-                        // Example: .2*.1
-                        //
-                        // here the `*` followed by `.` is not a referance because you can't take
-                        // referance of an integer literal in this language. Instead, this is a
-                        // binary multiplication of two floats. So, we leave the `.` untouched to
-                        // be lexed as part of the float literal the next time around.
-                        //
-                        TokenKind::Mul
-                    } else {
-                        self.next_char();
-                        TokenKind::Ref
-                    }
-                }
-                _ => TokenKind::Mul,
-            },
-            Some(b'/') => match self.peek_next_char() {
-                Some(b'=') => {
-                    self.next_char();
-                    TokenKind::DivEq
-                }
-                _ => TokenKind::Div,
-            },
-            Some(b'%') => match self.peek_next_char() {
-                Some(b'=') => {
-                    self.next_char();
-                    TokenKind::ModEq
-                }
-                _ => TokenKind::Mod,
-            },
-            Some(b'&') => match self.peek_next_char() {
-                Some(b'=') => {
-                    self.next_char();
-                    TokenKind::BitwiseAndEq
-                }
-                Some(b'&') => {
-                    self.next_char();
-                    TokenKind::LogicalAnd
-                }
-                _ => TokenKind::BitwiseAnd,
-            },
-            Some(b'|') => match self.peek_next_char() {
-                Some(b'=') => {
-                    self.next_char();
-                    TokenKind::BitwiseOrEq
-                }
-                Some(b'|') => {
-                    self.next_char();
-                    TokenKind::LogicalOr
-                }
-                _ => TokenKind::BitwiseOr,
-            },
-            Some(b'~') => match self.peek_next_char() {
-                Some(b'=') => {
-                    self.next_char();
-                    TokenKind::BitwiseNotEq
-                }
-                _ => TokenKind::BitwiseNot,
-            },
-            Some(b'^') => match self.peek_next_char() {
-                Some(b'=') => {
-                    self.next_char();
-                    TokenKind::BitwiseXorEq
-                }
-                _ => TokenKind::BitwiseXor,
-            },
-            Some(b'<') => match self.peek_next_char() {
-                Some(b'=') => {
-                    self.next_char();
-                    TokenKind::LessEq
-                }
-                Some(b'<') => {
-                    self.next_char();
-                    match self.peek_next_char() {
-                        Some(b'=') => {
-                            self.next_char();
-                            TokenKind::BitwiseShlEq
-                        }
-                        _ => TokenKind::BitwiseShl,
-                    }
-                }
-                _ => TokenKind::LessThan,
-            },
-            Some(b'>') => match self.peek_next_char() {
-                Some(b'=') => {
-                    self.next_char();
-                    TokenKind::GreaterEq
-                }
-                Some(b'>') => {
-                    self.next_char();
-                    match self.peek_next_char() {
-                        Some(b'=') => {
-                            self.next_char();
-                            TokenKind::BitwiseShrEq
-                        }
-                        _ => TokenKind::BitwiseShr,
-                    }
-                }
-                _ => TokenKind::GreaterThan,
-            },
-            Some(b'=') => match self.peek_next_char() {
-                Some(b'=') => {
-                    self.next_char();
-                    TokenKind::EqEq
-                }
-                Some(b'>') => {
-                    self.next_char();
-                    TokenKind::EqArrow
-                }
-                _ => TokenKind::Eq,
-            },
-            Some(b'!') => match self.peek_next_char() {
-                Some(b'=') => {
-                    self.next_char();
-                    TokenKind::NotEq
-                }
-                _ => TokenKind::Not,
-            },
-            Some(b'.') => {
-                match self.peek_next_char() {
-                    Some(b'.') => {
-                        self.next_char();
-                        TokenKind::DotDot
-                    }
-                    Some(b'*') => {
-                        self.next_char();
-                        TokenKind::Deref
-                    }
-                    Some(c) if c.is_ascii_digit() => {
-                        // We already consumed the `.` when calling `next_char()`.
-                        // So, we need to step back a little.
-                        self.character_offset -= 1;
-                        self.lex_num_literal()
-                    }
-                    _ => TokenKind::Dot,
-                }
-            }
-            Some(b',') => TokenKind::Comma,
-            Some(b':') => TokenKind::Colon,
-            Some(b';') => TokenKind::Semicolon,
-            Some(b'(') => TokenKind::OpenParen,
-            Some(b')') => TokenKind::CloseParen,
-            Some(b'{') => TokenKind::OpenCurly,
-            Some(b'}') => TokenKind::CloseCurly,
-            Some(b'[') => TokenKind::OpenBracket,
-            Some(b']') => TokenKind::CloseBracket,
-            Some(b'\'') => self.lex_char_literal(),
-            Some(b'"') => self.lex_str_literal(),
-            Some(c) if c.is_ascii_alphabetic() || c == b'_' => {
+        let token_kind = match self.peek_next_char() {
+            Some(c) if c.is_alphabetic() || c == '_' => {
+                let next_ch = self.next_char().unwrap();
+                assert_eq!(c, next_ch);
+                let mut ident_or_keyword = String::from(next_ch);
+
                 while let Some(c) = self.peek_next_char()
-                    && (c.is_ascii_alphanumeric() || c == b'_')
+                    && (c.is_alphanumeric() || c == '_')
                 {
-                    self.next_char();
+                    ident_or_keyword.push(self.next_char().unwrap());
                 }
 
-                let ident_or_keyword =
-                    &self.input[c0 + self.first_character_of_line_offset..self.character_offset];
-
-                match ident_or_keyword {
+                match &ident_or_keyword[..] {
                     // Booleans
                     "true" => TokenKind::BoolLiteral(true),
                     "false" => TokenKind::BoolLiteral(false),
@@ -401,18 +223,269 @@ impl<'a> Lexer<'a> {
                     _ => TokenKind::Ident(ident_or_keyword),
                 }
             }
-            Some(c) if c.is_ascii_digit() => {
-                // We already consumed the first digit when calling `next_char()`.
-                // So, we need to step back a little.
-                self.character_offset -= 1;
-                self.lex_num_literal()
+            Some(c) if c.is_ascii_digit() => self.lex_num_literal(),
+            Some('+') => {
+                self.next_char();
+                match self.peek_next_char() {
+                    Some('=') => {
+                        self.next_char();
+                        TokenKind::AddEq
+                    }
+                    _ => TokenKind::Add,
+                }
+            }
+            Some('-') => {
+                self.next_char();
+                match self.peek_next_char() {
+                    Some('=') => {
+                        self.next_char();
+                        TokenKind::SubEq
+                    }
+                    Some('>') => {
+                        self.next_char();
+                        TokenKind::Arrow
+                    }
+                    _ => TokenKind::Sub,
+                }
+            }
+            Some('*') => {
+                self.next_char();
+                match self.peek_next_char() {
+                    Some('=') => {
+                        self.next_char();
+                        TokenKind::MulEq
+                    }
+                    Some('.') => {
+                        if let Some(c) = self.peek_second_char()
+                            && c.is_numeric()
+                        {
+                            //
+                            // This implies that there might be a float literal after the `*`
+                            //
+                            // Example: .2*.1
+                            //
+                            // here the `*` followed by `.` is not a referance because you can't take
+                            // referance of an integer literal in this language. Instead, this is a
+                            // binary multiplication of two floats. So, we leave the `.` untouched to
+                            // be lexed as part of the float literal the next time around.
+                            //
+                            TokenKind::Mul
+                        } else {
+                            self.next_char();
+                            TokenKind::Ref
+                        }
+                    }
+                    _ => TokenKind::Mul,
+                }
+            }
+            Some('/') => {
+                self.next_char();
+                match self.peek_next_char() {
+                    Some('=') => {
+                        self.next_char();
+                        TokenKind::DivEq
+                    }
+                    _ => TokenKind::Div,
+                }
+            }
+            Some('%') => {
+                self.next_char();
+                match self.peek_next_char() {
+                    Some('=') => {
+                        self.next_char();
+                        TokenKind::ModEq
+                    }
+                    _ => TokenKind::Mod,
+                }
+            }
+            Some('&') => {
+                self.next_char();
+                match self.peek_next_char() {
+                    Some('=') => {
+                        self.next_char();
+                        TokenKind::BitwiseAndEq
+                    }
+                    Some('&') => {
+                        self.next_char();
+                        TokenKind::LogicalAnd
+                    }
+                    _ => TokenKind::BitwiseAnd,
+                }
+            }
+            Some('|') => {
+                self.next_char();
+                match self.peek_next_char() {
+                    Some('=') => {
+                        self.next_char();
+                        TokenKind::BitwiseOrEq
+                    }
+                    Some('|') => {
+                        self.next_char();
+                        TokenKind::LogicalOr
+                    }
+                    _ => TokenKind::BitwiseOr,
+                }
+            }
+            Some('~') => {
+                self.next_char();
+                match self.peek_next_char() {
+                    Some('=') => {
+                        self.next_char();
+                        TokenKind::BitwiseNotEq
+                    }
+                    _ => TokenKind::BitwiseNot,
+                }
+            }
+            Some('^') => {
+                self.next_char();
+                match self.peek_next_char() {
+                    Some('=') => {
+                        self.next_char();
+                        TokenKind::BitwiseXorEq
+                    }
+                    _ => TokenKind::BitwiseXor,
+                }
+            }
+            Some('<') => {
+                self.next_char();
+                match self.peek_next_char() {
+                    Some('=') => {
+                        self.next_char();
+                        TokenKind::LessEq
+                    }
+                    Some('<') => {
+                        self.next_char();
+                        match self.peek_next_char() {
+                            Some('=') => {
+                                self.next_char();
+                                TokenKind::BitwiseShlEq
+                            }
+                            _ => TokenKind::BitwiseShl,
+                        }
+                    }
+                    _ => TokenKind::LessThan,
+                }
+            }
+            Some('>') => {
+                self.next_char();
+                match self.peek_next_char() {
+                    Some('=') => {
+                        self.next_char();
+                        TokenKind::GreaterEq
+                    }
+                    Some('>') => {
+                        self.next_char();
+                        match self.peek_next_char() {
+                            Some('=') => {
+                                self.next_char();
+                                TokenKind::BitwiseShrEq
+                            }
+                            _ => TokenKind::BitwiseShr,
+                        }
+                    }
+                    _ => TokenKind::GreaterThan,
+                }
+            }
+            Some('=') => {
+                self.next_char();
+                match self.peek_next_char() {
+                    Some('=') => {
+                        self.next_char();
+                        TokenKind::EqEq
+                    }
+                    Some('>') => {
+                        self.next_char();
+                        TokenKind::EqArrow
+                    }
+                    _ => TokenKind::Eq,
+                }
+            }
+            Some('!') => {
+                self.next_char();
+                match self.peek_next_char() {
+                    Some('=') => {
+                        self.next_char();
+                        TokenKind::NotEq
+                    }
+                    _ => TokenKind::Not,
+                }
+            }
+            Some('.') => {
+                self.next_char();
+                match self.peek_next_char() {
+                    Some('.') => {
+                        self.next_char();
+                        TokenKind::DotDot
+                    }
+                    Some('*') => {
+                        self.next_char();
+                        TokenKind::Deref
+                    }
+                    Some(c) if c.is_numeric() => {
+                        // We already consumed the `.` when calling `next_char()`.
+                        // So, we need to step back a little.
+                        self.char_index -= 1;
+                        self.lex_num_literal()
+                    }
+                    _ => TokenKind::Dot,
+                }
+            }
+            Some(',') => {
+                self.next_char();
+                TokenKind::Comma
+            }
+            Some(':') => {
+                self.next_char();
+                TokenKind::Colon
+            }
+            Some(';') => {
+                self.next_char();
+                TokenKind::Semicolon
+            }
+            Some('(') => {
+                self.next_char();
+                TokenKind::OpenParen
+            }
+            Some(')') => {
+                self.next_char();
+                TokenKind::CloseParen
+            }
+            Some('{') => {
+                self.next_char();
+                TokenKind::OpenCurly
+            }
+            Some('}') => {
+                self.next_char();
+                TokenKind::CloseCurly
+            }
+            Some('[') => {
+                self.next_char();
+                TokenKind::OpenBracket
+            }
+            Some(']') => {
+                self.next_char();
+                TokenKind::CloseBracket
+            }
+            Some('\'') => {
+                self.next_char();
+                self.lex_char_literal()
+            }
+            Some('"') => {
+                self.next_char();
+                self.lex_str_literal()
             }
             None => TokenKind::Eof,
             _ => TokenKind::LexError,
         };
 
-        let l1 = self.line_offset;
-        let c1 = self.character_offset - self.first_character_of_line_offset - 1;
+        let l1 = self.line_index;
+
+        // @Cleanup: Do something better!
+        let c1 = if self.char_index > self.line_start {
+            self.char_index - self.line_start - 1
+        } else {
+            0
+        };
 
         assert!(l0 <= l1);
         assert!(c0 <= c1);
@@ -429,32 +502,31 @@ impl<'a> Lexer<'a> {
         });
     }
 
-    fn next_char(&mut self) -> Option<u8> {
-        let result = self.peek_next_char();
-        self.character_offset += 1;
+    fn next_char(&mut self) -> Option<char> {
+        let result = self.chars_iter.next();
+        self.char_index += 1;
         if let Some(c) = result
-            && c == b'\n'
+            && c == '\n'
         {
-            self.line_offset += 1;
-            self.first_character_of_line_offset = self.character_offset;
+            self.line_index += 1;
+            self.line_start = self.char_index;
         }
         result
     }
 
-    fn peek_next_char(&mut self) -> Option<u8> {
-        self.peek_char(1)
+    fn peek_next_char(&self) -> Option<char> {
+        self.chars_iter.clone().next()
     }
 
-    fn peek_char(&mut self, lookahead: usize) -> Option<u8> {
-        self.input
-            .as_bytes()
-            .get(self.character_offset + lookahead - 1)
-            .copied()
+    fn peek_second_char(&self) -> Option<char> {
+        let mut iter = self.chars_iter.clone();
+        iter.next();
+        iter.next()
     }
 
     fn eat_whitespaces(&mut self) {
         while let Some(c) = self.peek_next_char()
-            && c.is_ascii_whitespace()
+            && c.is_whitespace()
         {
             self.next_char();
         }
@@ -462,17 +534,17 @@ impl<'a> Lexer<'a> {
 
     fn eat_comments(&mut self) {
         loop {
-            if self.input[self.character_offset..].starts_with("//") {
+            if self.input[self.char_index..].starts_with("//") {
                 // eat the leading `//`
                 self.next_char();
                 self.next_char();
 
                 while let Some(c) = self.peek_next_char()
-                    && c != b'\n'
+                    && c != '\n'
                 {
                     self.next_char();
                 }
-            } else if self.input[self.character_offset..].starts_with("/*") {
+            } else if self.input[self.char_index..].starts_with("/*") {
                 // eat the leading `/*`
                 self.next_char();
                 self.next_char();
@@ -481,14 +553,14 @@ impl<'a> Lexer<'a> {
                 while let Some(c) = self.peek_next_char()
                     && depth_count > 0
                 {
-                    if c == b'*' {
+                    if c == '*' {
                         self.next_char();
-                        if self.peek_next_char() == Some(b'/') {
+                        if self.peek_next_char() == Some('/') {
                             depth_count -= 1;
                         }
-                    } else if c == b'/' {
+                    } else if c == '/' {
                         self.next_char();
-                        if self.peek_next_char() == Some(b'*') {
+                        if self.peek_next_char() == Some('*') {
                             depth_count += 1;
                         }
                     }
@@ -500,7 +572,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn lex_num_literal(&mut self) -> TokenKind<'a> {
+    fn lex_num_literal(&mut self) -> TokenKind {
         let mut result = String::new();
 
         let mut base = 10;
@@ -509,20 +581,20 @@ impl<'a> Lexer<'a> {
         let mut exp_sign = false;
 
         if let Some(c) = self.peek_next_char()
-            && c == b'0'
+            && c == '0'
         {
-            match self.peek_char(2) {
-                Some(b'x') => {
+            match self.peek_second_char() {
+                Some('x') => {
                     self.next_char();
                     self.next_char();
                     base = 16;
                 }
-                Some(b'o') => {
+                Some('o') => {
                     self.next_char();
                     self.next_char();
                     base = 8;
                 }
-                Some(b'b') => {
+                Some('b') => {
                     self.next_char();
                     self.next_char();
                     base = 2;
@@ -532,49 +604,49 @@ impl<'a> Lexer<'a> {
         }
 
         while let Some(c) = self.peek_next_char()
-            && (c.is_ascii_digit() || c == b'_' || c == b'.' || c == b'e' || c == b'-' || c == b'+')
+            && (c.is_numeric() || c == '_' || c == '.' || c == 'e' || c == '-' || c == '+')
         {
             self.next_char();
 
             // We allow an indefinite amount of underscores in int literals (for now).
-            if c == b'_' {
+            if c == '_' {
                 continue;
             }
 
-            if c == b'.' {
+            if c == '.' {
                 if float {
                     break;
                 }
                 float = true;
             }
 
-            if c == b'e' {
+            if c == 'e' {
                 if exp {
                     break;
                 }
                 if let Some(c) = self.peek_next_char()
-                    && !c.is_ascii_digit()
-                    && c != b'-'
-                    && c != b'+'
+                    && !c.is_numeric()
+                    && c != '-'
+                    && c != '+'
                 {
                     return TokenKind::LexError;
                 }
                 exp = true;
             }
 
-            if c == b'-' || c == b'+' {
+            if c == '-' || c == '+' {
                 if exp_sign {
                     break;
                 }
                 if let Some(c) = self.peek_next_char()
-                    && !c.is_ascii_digit()
+                    && !c.is_numeric()
                 {
                     return TokenKind::LexError;
                 }
                 exp_sign = true;
             }
 
-            result.push(c as char);
+            result.push(c);
         }
 
         if float {
@@ -593,64 +665,64 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn lex_str_literal(&mut self) -> TokenKind<'a> {
+    fn lex_str_literal(&mut self) -> TokenKind {
         let mut result = String::new();
 
         while let Some(c) = self.next_char()
-            && c != b'"'
+            && c != '"'
         {
             match c {
-                b'\\' => match self.next_char() {
-                    Some(b'n') => result.push('\n'),
-                    Some(b'r') => result.push('\r'),
-                    Some(b't') => result.push('\t'),
-                    Some(b'\\') => result.push('\\'),
-                    Some(b'"') => result.push('"'),
-                    Some(b'x') => {
+                '\\' => match self.next_char() {
+                    Some('n') => result.push('\n'),
+                    Some('r') => result.push('\r'),
+                    Some('t') => result.push('\t'),
+                    Some('\\') => result.push('\\'),
+                    Some('"') => result.push('"'),
+                    Some('x') => {
                         let mut v: u8 = 0;
                         for i in (0..=1).rev() {
                             match self.next_char() {
                                 Some(c) if c.is_ascii_hexdigit() => {
-                                    v |= ascii_to_hex_byte(c).unwrap_or(b'\0') << (4 * i);
+                                    v |= ascii_to_hex_byte(c).unwrap_or(0) << (4 * i);
                                 }
                                 _ => return TokenKind::LexError,
                             }
                         }
                         result.push(v as char);
                     }
-                    Some(b'u') | Some(b'U') => {
+                    Some('u') | Some('U') => {
                         todo!("Unicode code point support in string literals")
                     }
                     _ => {
                         return TokenKind::LexError;
                     }
                 },
-                _ => result.push(c as char),
+                _ => result.push(c),
             }
         }
 
         TokenKind::StrLiteral(result)
     }
 
-    fn lex_char_literal(&mut self) -> TokenKind<'a> {
+    fn lex_char_literal(&mut self) -> TokenKind {
         let mut result = 0_u8;
 
         while let Some(c) = self.next_char()
-            && c != b'\''
+            && c != '\''
         {
             match c {
-                b'\\' => match self.next_char() {
-                    Some(b'n') => result = b'\n',
-                    Some(b'r') => result = b'\r',
-                    Some(b't') => result = b'\t',
-                    Some(b'\\') => result = b'\\',
-                    Some(b'\'') => result = b'"',
-                    Some(b'x') => {
+                '\\' => match self.next_char() {
+                    Some('n') => result = b'\n',
+                    Some('r') => result = b'\r',
+                    Some('t') => result = b'\t',
+                    Some('\\') => result = b'\\',
+                    Some('\'') => result = b'"',
+                    Some('x') => {
                         let mut v: u8 = 0;
                         for i in (0..=1).rev() {
                             match self.next_char() {
                                 Some(c) if c.is_ascii_hexdigit() => {
-                                    v |= ascii_to_hex_byte(c).unwrap_or(b'\0') << (4 * i);
+                                    v |= ascii_to_hex_byte(c).unwrap_or(0) << (4 * i);
                                 }
                                 _ => return TokenKind::LexError,
                             }
@@ -661,7 +733,7 @@ impl<'a> Lexer<'a> {
                         return TokenKind::LexError;
                     }
                 },
-                _ => result = c,
+                _ => result = c as u8,
             }
         }
 
@@ -669,7 +741,8 @@ impl<'a> Lexer<'a> {
     }
 }
 
-fn ascii_to_hex_byte(c: u8) -> Option<u8> {
+fn ascii_to_hex_byte(c: char) -> Option<u8> {
+    let c = c as u8;
     match c {
         b'0'..=b'9' => Some(c - b'0'),
         b'A'..=b'Z' => Some(c - b'A' + 10),
