@@ -152,39 +152,146 @@ impl<'a> Lexer<'a> {
         &self.tokens_buffer[self.lookahead_token_offset - 1]
     }
 
-    pub fn error_at(&self, loc: Location, desc: &str) {
-        let is_tty = std::io::stdout().is_terminal();
-        let (cyan, red, reset) = if is_tty {
-            ("\x1b[36m", "\x1b[31m", "\x1b[0m")
-        } else {
-            ("", "", "")
-        };
+    pub fn report_error_at(&self, loc: Location, msg: &str) {
+        assert!(
+            loc.l0 <= loc.l1,
+            "Invalid location found while reporting error, check call site."
+        );
 
         eprintln!(
             "{}:{}:{}: error: {}",
             loc.input_path.display(),
             loc.l0 + 1,
             loc.c0 + 1,
-            desc
+            msg
         );
 
         eprintln!();
+        {
+            let is_tty = std::io::stdout().is_terminal(); // To ensure ansi escape codes are supported.
 
-        if let Some(line) = &self.input.lines().nth(loc.l0 - 1) {
-            eprintln!("{} | {cyan}{}{reset}", loc.l0, line,);
-        }
-        let current_line = &self.input.lines().nth(loc.l0).unwrap();
-        eprintln!(
-            "{} | {cyan}{}{reset}{red}{}{reset}{cyan}{}{reset}",
-            loc.l0 + 1,
-            &current_line[..loc.c0],
-            &current_line[loc.c0..loc.c1 + 1],
-            &current_line[loc.c1 + 1..],
-        );
-        if let Some(line) = &self.input.lines().nth(loc.l0 + 1) {
-            eprintln!("{} | {cyan}{}{reset}", loc.l0 + 2, line,);
-        }
+            let (ansi_code_cyan, ansi_code_red, ansi_code_reset) = if is_tty {
+                ("\x1b[36m", "\x1b[31m", "\x1b[0m")
+            } else {
+                ("", "", "")
+            };
 
+            let padding = format!("{}", loc.l1 + 2).len();
+
+            // Previous line
+            if let Some(previous_line) = &self.input.lines().nth(loc.l0 - 1) {
+                eprintln!(
+                    "{LINE_NO:>PAD$} | {CYAN}{}{RESET}",
+                    previous_line,
+                    LINE_NO = loc.l0,
+                    PAD = padding,
+                    CYAN = ansi_code_cyan,
+                    RESET = ansi_code_reset,
+                );
+            }
+
+            // Actually relevant line(s)
+            //
+            // @Note: It's okay to panic if any of the unwraps fail here.
+            // That would mean there is a bug somewhere else.
+            //
+            if loc.l0 == loc.l1 {
+                let current_line = &self.input.lines().nth(loc.l0).unwrap();
+                eprintln!(
+                    "{LINE_NO:>PAD$} | {CYAN}{}{RED}{}{CYAN}{}{RESET}",
+                    &current_line[..loc.c0],
+                    &current_line[loc.c0..loc.c1 + 1],
+                    &current_line[loc.c1 + 1..],
+                    LINE_NO = loc.l0 + 1,
+                    PAD = padding,
+                    CYAN = ansi_code_cyan,
+                    RED = ansi_code_red,
+                    RESET = ansi_code_reset,
+                );
+                if !is_tty {
+                    eprintln!(
+                        "{LINE_NO:>PAD$} | {SPACES}{ARROWS}",
+                        LINE_NO = "",
+                        PAD = padding,
+                        SPACES = " ".repeat(loc.c0),
+                        ARROWS = "^".repeat(loc.c1 - loc.c0 + 1)
+                    );
+                }
+            } else {
+                let first_line = &self.input.lines().nth(loc.l0).unwrap();
+                eprintln!(
+                    "{LINE_NO:>PAD$} | {CYAN}{}{RED}{}{RESET}",
+                    &first_line[..loc.c0],
+                    &first_line[loc.c0..],
+                    LINE_NO = loc.l0 + 1,
+                    PAD = padding,
+                    CYAN = ansi_code_cyan,
+                    RED = ansi_code_red,
+                    RESET = ansi_code_reset,
+                );
+                if !is_tty {
+                    eprintln!(
+                        "{LINE_NO:>PAD$} | {SPACES}{ARROWS}",
+                        LINE_NO = "",
+                        PAD = padding,
+                        SPACES = " ".repeat(loc.c0),
+                        ARROWS = "^".repeat(first_line.chars().count() - loc.c0)
+                    );
+                }
+
+                for i in 1..(loc.l1 - loc.l0) {
+                    let middle_line = &self.input.lines().nth(loc.l0 + i).unwrap();
+                    eprintln!(
+                        "{LINE_NO:>PAD$} | {RED}{}{RESET}",
+                        &middle_line[..],
+                        LINE_NO = loc.l0 + i + 1,
+                        PAD = padding,
+                        RED = ansi_code_red,
+                        RESET = ansi_code_reset,
+                    );
+                    if !is_tty {
+                        eprintln!(
+                            "{LINE_NO:>PAD$} | {ARROWS}",
+                            LINE_NO = "",
+                            PAD = padding,
+                            ARROWS = "^".repeat(middle_line.chars().count())
+                        );
+                    }
+                }
+
+                let last_line = &self.input.lines().nth(loc.l1).unwrap();
+                eprintln!(
+                    "{LINE_NO:>PAD$} | {RED}{}{CYAN}{}{RESET}",
+                    &last_line[..=loc.c1],
+                    &last_line[loc.c1 + 1..],
+                    LINE_NO = loc.l1 + 1,
+                    PAD = padding,
+                    CYAN = ansi_code_cyan,
+                    RED = ansi_code_red,
+                    RESET = ansi_code_reset,
+                );
+                if !is_tty {
+                    eprintln!(
+                        "{LINE_NO:>PAD$} | {ARROWS}",
+                        LINE_NO = "",
+                        PAD = padding,
+                        ARROWS = "^".repeat(loc.c1 + 1)
+                    );
+                }
+            }
+
+            // Next line
+            if let Some(next_line) = &self.input.lines().nth(loc.l1 + 1) {
+                eprintln!(
+                    "{LINE_NO:>PAD$} | {CYAN}{}{RESET}",
+                    next_line,
+                    LINE_NO = loc.l1 + 2,
+                    PAD = padding,
+                    CYAN = ansi_code_cyan,
+                    RESET = ansi_code_reset,
+                );
+            }
+        }
         eprintln!();
     }
 

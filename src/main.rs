@@ -17,9 +17,9 @@ fn main() {
 
     let mut lex = lexer::Lexer::new(&input, Path::new(&input_path));
 
-    let token1 = lex.peek_token(8);
-    let loc = token1.loc;
-    lex.error_at(loc, "ERROR REPORTING TEST");
+    let token = lex.peek_token(8);
+    let loc = token.loc;
+    lex.report_error_at(loc, "This is a test for reporting errors.");
 
     while let token = lex.next_token()
         && token.kind != lexer::TokenKind::Eof
