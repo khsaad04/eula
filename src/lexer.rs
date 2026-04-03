@@ -197,9 +197,7 @@ impl<'a> Lexer<'a> {
 
         let token_kind = match self.peek_next_char() {
             Some(c) if c.is_alphabetic() || c == '_' => {
-                let next_ch = self.next_char().unwrap();
-                assert_eq!(c, next_ch);
-                let mut ident_or_keyword = String::from(next_ch);
+                let mut ident_or_keyword = String::from(self.next_char().unwrap());
 
                 while let Some(c) = self.peek_next_char()
                     && (c.is_alphanumeric() || c == '_')
