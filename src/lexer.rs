@@ -141,14 +141,15 @@ impl<'a> Lexer<'a> {
     }
 
     pub fn peek_next_token(&mut self) -> &Token<'a> {
-        self.peek_token(1)
+        self.peek_token(0)
     }
 
-    pub fn peek_token(&mut self, lookahead: usize) -> &Token<'a> {
-        for _ in 0..(self.lookahead_token_offset + lookahead - self.current_token_offset) {
+    pub fn peek_token(&mut self, lookahead_index: usize) -> &Token<'a> {
+        for _ in 0..(self.lookahead_token_offset + lookahead_index - self.current_token_offset + 1)
+        {
             self.advance_token();
         }
-        self.lookahead_token_offset += lookahead;
+        self.lookahead_token_offset += lookahead_index + 1;
         &self.tokens_buffer[self.lookahead_token_offset - 1]
     }
 
@@ -178,23 +179,30 @@ impl<'a> Lexer<'a> {
 
             let padding = format!("{}", loc.l1 + 2).len();
 
+            //
             // Previous line
-            if let Some(previous_line) = &self.input.lines().nth(loc.l0 - 1) {
-                eprintln!(
-                    "{LINE_NO:>PAD$} | {CYAN}{}{RESET}",
-                    previous_line,
-                    LINE_NO = loc.l0,
-                    PAD = padding,
-                    CYAN = ansi_code_cyan,
-                    RESET = ansi_code_reset,
-                );
+            //
+
+            // This if-statement is to avoid subtracting a usize with underflow.
+            // Which isn't a problem in release build but still annoying in debug build.
+            if loc.l0 > 0 {
+                if let Some(previous_line) = &self.input.lines().nth(loc.l0 - 1) {
+                    eprintln!(
+                        "{LINE_NO:>PAD$} | {CYAN}{}{RESET}",
+                        previous_line,
+                        LINE_NO = loc.l0,
+                        PAD = padding,
+                        CYAN = ansi_code_cyan,
+                        RESET = ansi_code_reset,
+                    );
+                }
             }
 
+            //
             // Actually relevant line(s)
             //
             // @Note: It's okay to panic if any of the unwraps fail here.
             // That would mean there is a bug somewhere else.
-            //
             if loc.l0 == loc.l1 {
                 let current_line = &self.input.lines().nth(loc.l0).unwrap();
                 eprintln!(
@@ -280,7 +288,9 @@ impl<'a> Lexer<'a> {
                 }
             }
 
+            //
             // Next line
+            //
             if let Some(next_line) = &self.input.lines().nth(loc.l1 + 1) {
                 eprintln!(
                     "{LINE_NO:>PAD$} | {CYAN}{}{RESET}",
@@ -361,7 +371,7 @@ impl<'a> Lexer<'a> {
                         TokenKind::MulEq
                     }
                     Some('.') => {
-                        if let Some(c) = self.peek_second_char()
+                        if let Some(c) = self.peek_char(1)
                             && c.is_numeric()
                         {
                             //
@@ -620,12 +630,14 @@ impl<'a> Lexer<'a> {
     }
 
     fn peek_next_char(&self) -> Option<char> {
-        self.chars_iter.clone().next()
+        self.peek_char(0)
     }
 
-    fn peek_second_char(&self) -> Option<char> {
+    fn peek_char(&self, lookahead_index: usize) -> Option<char> {
         let mut iter = self.chars_iter.clone();
-        iter.next();
+        for _ in 0..lookahead_index {
+            iter.next();
+        }
         iter.next()
     }
 
@@ -688,7 +700,7 @@ impl<'a> Lexer<'a> {
         if let Some(c) = self.peek_next_char()
             && c == '0'
         {
-            match self.peek_second_char() {
+            match self.peek_char(1) {
                 Some('x') => {
                     self.next_char();
                     self.next_char();

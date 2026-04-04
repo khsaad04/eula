@@ -17,7 +17,7 @@ fn main() {
 
     let mut lex = lexer::Lexer::new(&input, Path::new(&input_path));
 
-    let token = lex.peek_token(8);
+    let token = lex.peek_token(7);
     let loc = token.loc;
     lex.report_error_at(loc, "This is a test for reporting errors.");
 
