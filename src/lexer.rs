@@ -78,14 +78,12 @@ pub enum TokenKind {
     LogicalOr,     // ||
     LogicalNot,    // !
 
-    Assign,      // =
-    Dot,         // .
-    DoubleDot,   // ..
-    Comma,       // ,
-    Colon,       // :
-    DoubleColon, // ::
-    ColonEquals, // :=
-    Semicolon,   // ;
+    Assign,    // =
+    Dot,       // .
+    DoubleDot, // ..
+    Comma,     // ,
+    Colon,     // :
+    Semicolon, // ;
 
     OpenParen,    // (
     CloseParen,   // )
@@ -542,17 +540,7 @@ impl<'a> Lexer<'a> {
             }
             Some(':') => {
                 self.next_character();
-                match self.peek_next_character() {
-                    Some(':') => {
-                        self.next_character();
-                        TokenKind::DoubleColon
-                    }
-                    Some('=') => {
-                        self.next_character();
-                        TokenKind::ColonEquals
-                    }
-                    _ => TokenKind::Colon,
-                }
+                TokenKind::Colon
             }
             Some(';') => {
                 self.next_character();
