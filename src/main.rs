@@ -1,37 +1,38 @@
 mod lexer;
 
-use std::{fs, path::Path, process::exit};
+use std::{env, fs, path, process};
 
 fn main() {
-    let mut args = std::env::args();
-    args.next(); // Consume the executable path.
+    let mut args = env::args();
+    args.next(); // Eat the executable path.
 
-    let input_path = args.next();
-    if input_path.is_none() {
-        eprintln!("ERROR: Missing input file path.");
-        exit(1);
-    }
+    if let Some(input_path) = args.next() {
+        if let Ok(input) = fs::read_to_string(&input_path) {
+            let mut l = lexer::Lexer::new(&input, path::Path::new(&input_path));
 
-    let input_path = input_path.unwrap();
-    let input = fs::read_to_string(&input_path).unwrap();
+            let token = l.peek_token(6);
+            let loc = token.loc; // Copy the location.
+            l.report_error_at(loc, "This is a test for reporting errors.");
 
-    let mut lex = lexer::Lexer::new(&input, Path::new(&input_path));
-
-    let token = lex.peek_token(7);
-    let loc = token.loc;
-    lex.report_error_at(loc, "This is a test for reporting errors.");
-
-    while let token = lex.next_token()
-        && token.kind != lexer::TokenKind::Eof
-    {
-        println!(
-            "{}:{:>2}:{:>2} -> {:>2}:{:>2}: {:?}",
-            token.loc.input_path.display(),
-            token.loc.l0 + 1,
-            token.loc.c0 + 1,
-            token.loc.l1 + 1,
-            token.loc.c1 + 1,
-            token.kind
-        );
+            while let token = l.next_token()
+                && token.kind != lexer::TokenKind::Eof
+            {
+                println!(
+                    "{}:{:>2}:{:>2} -> {:>2}:{:>2}: {:?}",
+                    token.loc.input_path.display(),
+                    token.loc.l0 + 1,
+                    token.loc.c0 + 1,
+                    token.loc.l1 + 1,
+                    token.loc.c1 + 1,
+                    token.kind,
+                );
+            }
+        } else {
+            eprintln!("error: Could not read `{input_path}` to string.");
+            process::exit(1);
+        }
+    } else {
+        eprintln!("error: Missing input file path.");
+        process::exit(1);
     }
 }
