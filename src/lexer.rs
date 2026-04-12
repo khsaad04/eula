@@ -16,7 +16,6 @@ pub struct Lexer<'a> {
 
     tokens_buffer: Vec<Token<'a>>,
     current_token_offset: usize,
-    lookahead_token_offset: usize,
 }
 
 #[derive(Debug)]
@@ -126,7 +125,6 @@ impl<'a> Lexer<'a> {
             // avoid re-allocation in the beginning.
             tokens_buffer: vec![],
             current_token_offset: 0,
-            lookahead_token_offset: 0,
         }
     }
 
@@ -140,12 +138,10 @@ impl<'a> Lexer<'a> {
     }
 
     pub fn peek_token(&mut self, lookahead_index: usize) -> &Token<'a> {
-        for _ in 0..(self.lookahead_token_offset + lookahead_index - self.current_token_offset + 1)
-        {
+        while self.current_token_offset + lookahead_index >= self.tokens_buffer.len() {
             self.advance_token();
         }
-        self.lookahead_token_offset += lookahead_index + 1;
-        &self.tokens_buffer[self.lookahead_token_offset - 1]
+        &self.tokens_buffer[self.current_token_offset + lookahead_index]
     }
 
     pub fn peek_next_token(&mut self) -> &Token<'a> {
@@ -153,8 +149,14 @@ impl<'a> Lexer<'a> {
     }
 
     pub fn report_error_at(&self, loc: Location, msg: &str) {
+        if loc.l0 == loc.l1 {
+            assert!(
+                loc.c0 <= loc.c1,
+                "Invalid location found while reporting error, check call site."
+            );
+        }
         assert!(
-            loc.l0 <= loc.l1 && loc.c0 <= loc.c1,
+            loc.l0 <= loc.l1,
             "Invalid location found while reporting error, check call site."
         );
 
@@ -319,8 +321,8 @@ impl<'a> Lexer<'a> {
                     "false" => TokenKind::BoolLiteral(false),
 
                     // Floats
-                    "inf" => TokenKind::FloatLiteral(f64::NAN),
-                    "nan" => TokenKind::FloatLiteral(f64::INFINITY),
+                    "inf" => TokenKind::FloatLiteral(f64::INFINITY),
+                    "nan" => TokenKind::FloatLiteral(f64::NAN),
 
                     // Keywords
                     "fn" => TokenKind::Fn,
@@ -514,26 +516,23 @@ impl<'a> Lexer<'a> {
                     _ => TokenKind::LogicalNot,
                 }
             }
-            Some('.') => {
-                self.next_character();
-                match self.peek_next_character() {
-                    Some('.') => {
-                        self.next_character();
-                        TokenKind::DoubleDot
-                    }
-                    Some('*') => {
-                        self.next_character();
-                        TokenKind::Deref
-                    }
-                    Some(c) if c.is_numeric() => {
-                        // We already consumed the `.` when calling `next_char()`.
-                        // So, we need to step back a little.
-                        self.current_character_index -= 1;
-                        self.lex_numeric_literal()
-                    }
-                    _ => TokenKind::Dot,
+            Some('.') => match self.peek_character(1) {
+                Some('.') => {
+                    self.next_character();
+                    self.next_character();
+                    TokenKind::DoubleDot
                 }
-            }
+                Some('*') => {
+                    self.next_character();
+                    self.next_character();
+                    TokenKind::Deref
+                }
+                Some(c) if c.is_numeric() => self.lex_numeric_literal(),
+                _ => {
+                    self.next_character();
+                    TokenKind::Dot
+                }
+            },
             Some(',') => {
                 self.next_character();
                 TokenKind::Comma
@@ -593,8 +592,10 @@ impl<'a> Lexer<'a> {
             0
         };
 
+        if l0 == l1 {
+            assert!(c0 <= c1);
+        }
         assert!(l0 <= l1);
-        assert!(c0 <= c1);
 
         self.tokens_buffer.push(Token {
             kind: token_kind,
@@ -610,7 +611,9 @@ impl<'a> Lexer<'a> {
 
     fn next_character(&mut self) -> Option<char> {
         let result = self.input_iter.next();
-        self.current_character_index += 1;
+        if result.is_some() {
+            self.current_character_index += 1;
+        }
         if let Some(c) = result
             && c == '\n'
         {
@@ -780,15 +783,18 @@ impl<'a> Lexer<'a> {
             }
         }
     }
-
     fn lex_string_literal(&mut self) -> TokenKind {
         let mut result = String::new();
 
-        while let Some(c) = self.next_character()
-            && c != '"'
-        {
-            match c {
-                '\\' => match self.next_character() {
+        loop {
+            match self.next_character() {
+                None => {
+                    return TokenKind::LexError {
+                        msg: "Unclosed string literal (unexpected EOF).".to_string(),
+                    };
+                }
+                Some('"') => break,
+                Some('\\') => match self.next_character() {
                     Some('n') => result.push('\n'),
                     Some('r') => result.push('\r'),
                     Some('t') => result.push('\t'),
@@ -798,7 +804,7 @@ impl<'a> Lexer<'a> {
                         Ok(c) => result.push(c),
                         Err(()) => {
                             return TokenKind::LexError {
-                                msg: "Must have at least 2 hex digits afer '\\x'.".to_string(),
+                                msg: "Must have exactly 2 hex digits after '\\x'.".to_string(),
                             };
                         }
                     },
@@ -806,7 +812,7 @@ impl<'a> Lexer<'a> {
                         Ok(c) => result.push(c),
                         Err(()) => {
                             return TokenKind::LexError {
-                                msg: "Must have at least 4 hex digits afer '\\u'.".to_string(),
+                                msg: "Must have exactly 4 hex digits after '\\u'.".to_string(),
                             };
                         }
                     },
@@ -814,19 +820,22 @@ impl<'a> Lexer<'a> {
                         Ok(c) => result.push(c),
                         Err(()) => {
                             return TokenKind::LexError {
-                                msg: "Must have at least 8 hex digits afer '\\U'.".to_string(),
+                                msg: "Must have exactly 8 hex digits after '\\U'.".to_string(),
                             };
                         }
                     },
                     Some(c) => {
                         return TokenKind::LexError {
-                            msg: format!("Invalid escape code in string literal: `{}`", c)
-                                .to_string(),
+                            msg: format!("Invalid escape code in string literal: `{}`", c),
                         };
                     }
-                    None => break,
+                    None => {
+                        return TokenKind::LexError {
+                            msg: "Unclosed string literal (unexpected EOF).".to_string(),
+                        };
+                    }
                 },
-                _ => result.push(c),
+                Some(c) => result.push(c),
             }
         }
 
@@ -834,38 +843,52 @@ impl<'a> Lexer<'a> {
     }
 
     fn lex_character_literal(&mut self) -> TokenKind {
-        let mut result: u8 = 0;
-
-        while let Some(c) = self.next_character()
-            && c != '\''
-        {
-            match c {
-                '\\' => match self.next_character() {
-                    Some('n') => result = b'\n',
-                    Some('r') => result = b'\r',
-                    Some('t') => result = b'\t',
-                    Some('\\') => result = b'\\',
-                    Some('\'') => result = b'"',
-                    Some('x') => match self.make_possible_character_from_hex_digits(2) {
-                        Ok(c) => result = c as u8,
-                        Err(()) => {
-                            return TokenKind::LexError {
-                                msg: "Must have at least 2 hex digits afer '\\x'.".to_string(),
-                            };
-                        }
-                    },
-                    _ => {
+        let result: u8 = match self.next_character() {
+            None | Some('\'') => {
+                return TokenKind::LexError {
+                    msg: "Empty character literal.".to_string(),
+                };
+            }
+            Some('\\') => match self.next_character() {
+                Some('n') => b'\n',
+                Some('r') => b'\r',
+                Some('t') => b'\t',
+                Some('\\') => b'\\',
+                Some('\'') => b'\'',
+                Some('x') => match self.make_possible_character_from_hex_digits(2) {
+                    Ok(c) => c as u8,
+                    Err(()) => {
                         return TokenKind::LexError {
-                            msg: format!("Invalid escape code in character literal: `{}`", c)
-                                .to_string(),
+                            msg: "Must have exactly 2 hex digits after '\\x'.".to_string(),
                         };
                     }
                 },
-                _ => result = c as u8,
-            }
-        }
+                Some(c) => {
+                    return TokenKind::LexError {
+                        msg: format!("Invalid escape code in character literal: `{}`", c),
+                    };
+                }
+                None => {
+                    return TokenKind::LexError {
+                        msg: "Unexpected EOF in character literal.".to_string(),
+                    };
+                }
+            },
+            Some(c) => c as u8,
+        };
 
-        TokenKind::CharLiteral(result)
+        match self.next_character() {
+            Some('\'') => TokenKind::CharLiteral(result),
+            None => TokenKind::LexError {
+                msg: "Unclosed character literal (unexpected EOF).".to_string(),
+            },
+            Some(c) => TokenKind::LexError {
+                msg: format!(
+                    "Character literal contains more than one character: `{}`",
+                    c
+                ),
+            },
+        }
     }
 
     fn make_possible_character_from_hex_digits(&mut self, n: usize) -> Result<char, ()> {

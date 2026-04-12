@@ -10,7 +10,7 @@ fn main() {
         if let Ok(input) = fs::read_to_string(&input_path) {
             let mut l = lexer::Lexer::new(&input, path::Path::new(&input_path));
 
-            let token = l.peek_token(6);
+            let token = l.peek_token(7);
             let loc = token.loc; // Copy the location.
             l.report_error_at(loc, "This is a test for reporting errors.");
 
