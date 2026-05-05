@@ -2,7 +2,7 @@
 
 use std::{io::IsTerminal, path, str};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Lexer<'a> {
     // Read-only data
     input: &'a str,
@@ -18,13 +18,13 @@ pub struct Lexer<'a> {
     current_token_offset: usize,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Token<'a> {
     pub kind: TokenKind,
     pub loc: Location<'a>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
     // Literals
     Ident(String),
