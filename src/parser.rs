@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use crate::lexer;
+use lexer::TokenKind as TK;
 
 use std::{collections::HashMap, path};
 
@@ -61,7 +62,30 @@ pub enum AstExpr {
 
 #[derive(Debug, Clone)]
 pub enum AstStmt {
+    Decl(AstDecl),
+    Assign {
+        op: AssignOp,
+        lvalue: AstExpr,
+        rvalue: AstExpr,
+    },
+    If {
+        cond: AstExpr,
+        block: AstBlock,
+    },
+    For {
+        init: Option<Box<AstStmt>>,
+        cond: Option<Box<AstStmt>>,
+        incr: Option<Box<AstStmt>>,
+
+        block: AstBlock,
+    },
     Expr(AstExpr),
+}
+
+#[derive(Debug, Clone)]
+pub enum AssignOp {
+    Eq,  // =
+    Add, // +=
 }
 
 #[derive(Debug, Clone)]
@@ -76,82 +100,141 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn parse(&mut self) -> AstTopLevel {
-        let mut result = AstTopLevel {
+    pub fn parse_top_level(&mut self) -> AstTopLevel {
+        let mut top_level = AstTopLevel {
             decls: HashMap::new(),
         };
 
-        let tok = self.lexer.next_token();
-        let tok_kind = tok.kind.clone();
+        while self.lexer.peek_next_token().kind != lexer::TokenKind::Eof {
+            self.parse_decl(&mut top_level);
+        }
 
-        use lexer::TokenKind as TK;
+        top_level
+    }
+
+    fn parse_decl(&mut self, top_level: &mut AstTopLevel) {
+        let mut tok = self.lexer.next_token();
+        let mut tok_kind = tok.kind.clone();
+
+        let decl_id_loc = tok.loc.clone();
+
         match tok_kind {
             TK::Ident(id) => {
                 self.expect_token(TK::Colon);
                 self.expect_token(TK::Colon);
 
-                self.expect_token(TK::Fn);
-                self.expect_token(TK::OpenCurly);
+                tok = self.lexer.next_token();
+                tok_kind = tok.kind.clone();
+                let tok_loc = tok.loc.clone();
 
-                let mut block: Vec<AstStmt> = Vec::new();
+                let decl: AstDecl = match tok_kind {
+                    TK::Fn => {
+                        // @Todo: Handle function parameters and return type.
+                        let params: Vec<AstParam> = vec![];
+                        let return_type = AstType::Void;
 
-                let tok = self.lexer.next_token();
-                let tok_kind = tok.kind.clone();
-
-                match tok_kind {
-                    TK::Ident(id) => {
-                        self.expect_token(TK::OpenParen);
-
-                        let mut args: Vec<AstExpr> = Vec::new();
-
-                        let tok = self.lexer.next_token();
-                        let tok_kind = tok.kind.clone();
-
-                        match tok_kind {
-                            TK::StrLiteral(s) => {
-                                args.push(AstExpr::Str(s.clone()));
-                            }
-                            _ => todo!(),
+                        let mut body: Option<AstBlock> = None;
+                        if self.lexer.peek_next_token().kind == TK::OpenCurly {
+                            body = Some(self.parse_block());
                         }
 
-                        self.expect_token(TK::CloseParen);
-
-                        let fn_call = AstExpr::FnCall {
+                        AstDecl::Fn(AstFnDecl {
                             name: id.clone(),
-                            args,
-                        };
-
-                        self.expect_token(TK::Semicolon);
-                        block.push(AstStmt::Expr(fn_call));
+                            params,
+                            return_type,
+                            body,
+                        })
                     }
-                    _ => todo!(),
+                    _ => {
+                        self.lexer.report_error_at(tok_loc, "");
+                        unimplemented!("Non-function declarations.")
+                    }
+                };
+
+                if top_level.decls.contains_key(&id) {
+                    return self.lexer.report_error_at(
+                        decl_id_loc,
+                        &format!("Redefintion of `{}` at top level.", &id),
+                    );
                 }
 
-                result.decls.insert(
-                    id.clone(),
-                    AstDecl::Fn(AstFnDecl {
-                        name: id.clone(),
-                        params: Vec::new(),
-                        return_type: AstType::Void,
-                        body: Some(block),
-                    }),
-                );
+                top_level.decls.insert(id, decl);
             }
-            _ => todo!(),
+            _ => self
+                .lexer
+                .report_error_at(decl_id_loc, "Top level only supports declarations."),
         }
+    }
 
-        result
+    fn parse_block(&mut self) -> AstBlock {
+        self.expect_token(TK::OpenCurly);
+        let mut block: Vec<AstStmt> = Vec::new();
+
+        while self.lexer.peek_next_token().kind != TK::CloseCurly {
+            block.push(self.parse_statement());
+        }
+        self.expect_token(TK::CloseCurly);
+        block
+    }
+
+    fn parse_statement(&mut self) -> AstStmt {
+        let tok = self.lexer.peek_next_token();
+        let tok_kind = tok.kind.clone();
+        let tok_loc = tok.loc.clone();
+
+        match tok_kind {
+            TK::Ident(_) => {
+                let tok = self.lexer.peek_token(1);
+                let tok_kind = tok.kind.clone();
+                let tok_loc = tok.loc.clone();
+                if tok_kind == TK::OpenParen {
+                    self.parse_fn_call_statement()
+                } else {
+                    self.lexer.report_error_at(tok_loc, "");
+                    unimplemented!("All kinds of statements.")
+                }
+            }
+            _ => {
+                self.lexer.report_error_at(tok_loc, "");
+                unimplemented!("All kinds of statements.")
+            }
+        }
+    }
+
+    fn parse_fn_call_statement(&mut self) -> AstStmt {
+        let TK::Ident(id) = self.lexer.next_token().kind.clone() else {
+            unreachable!()
+        };
+        self.expect_token(TK::OpenParen);
+
+        let mut args: Vec<AstExpr> = Vec::new();
+
+        loop {
+            let tok = self.lexer.next_token();
+            let tok_kind = tok.kind.clone();
+            match tok_kind {
+                TK::StrLiteral(s) => args.push(AstExpr::Str(s)),
+                TK::Comma => continue,
+                TK::CloseParen => break,
+                _ => todo!(),
+            }
+        }
+        self.expect_token(TK::Semicolon);
+        AstStmt::Expr(AstExpr::FnCall { name: id, args })
     }
 
     fn expect_token(&mut self, expected_token_kind: lexer::TokenKind) {
-        let tok = self.lexer.next_token();
-        let kind = tok.kind.clone();
-        let loc = tok.loc;
+        let next_token = self.lexer.next_token();
+        let next_token_kind = next_token.kind.clone();
+        let loc = next_token.loc.clone();
 
-        if kind != expected_token_kind {
+        if next_token_kind != expected_token_kind {
             self.lexer.report_error_at(
                 loc,
-                format!("Expected {:?} but got {:?}.", expected_token_kind, kind).as_str(),
+                &format!(
+                    "Expected `{:?}` but got `{:?}`.",
+                    expected_token_kind, next_token_kind
+                ),
             );
             std::process::exit(1);
         }

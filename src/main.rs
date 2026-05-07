@@ -21,7 +21,7 @@ impl Compiler {
             }
             Ok(input) => {
                 let mut parser = parser::Parser::new(&input, path::Path::new(input_path));
-                let ast = parser.parse();
+                let ast = parser.parse_top_level();
                 dbg!(ast);
             }
         }

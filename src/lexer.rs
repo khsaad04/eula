@@ -99,7 +99,7 @@ pub enum TokenKind {
     Eof,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Location<'a> {
     pub input_path: &'a path::Path,
 
