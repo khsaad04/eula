@@ -1,22 +1,8 @@
-#![allow(dead_code)]
-
-use std::{io::IsTerminal, path, str};
-
-#[derive(Debug, Clone)]
-pub struct Lexer<'a> {
-    // Read-only data
-    input: &'a str,
-    input_path: &'a path::Path,
-
-    // Lexing state
-    input_iter: str::Chars<'a>,
-    current_character_index: usize,
-    current_line_index: usize,
-    current_line_begin_offset: usize,
-
-    tokens_buffer: Vec<Token<'a>>,
-    current_token_offset: usize,
-}
+use std::{
+    fmt,
+    io::{self, IsTerminal},
+    path, str,
+};
 
 #[derive(Debug, Clone)]
 pub struct Token<'a> {
@@ -24,31 +10,58 @@ pub struct Token<'a> {
     pub loc: Location<'a>,
 }
 
+impl fmt::Display for Token<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.kind)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
     // Literals
     Ident(String),
-    StrLiteral(String),
-    CharLiteral(u8),
-    IntLiteral(u128),
-    FloatLiteral(f64),
-    BoolLiteral(bool),
+    Str(String),
+    Char(u8),
+    Int(u128),
+    Float(f64),
+    Bool(bool),
 
     // Keywords
     Fn,
+    Return,
     For,
+    Break,
+    Continue,
     If,
+    Then,
+    Case,
     Else,
+
+    // Types
+    U0, // alias: void
+    U8, // alias: char
+    U16,
+    U32,
+    U64,
+    U128,
+    I0, // alias: bool
+    I8,
+    I16,
+    I32, // alias: int
+    I64,
+    I128,
+    F32, // alias: float
+    F64,
 
     // Operators
     Plus,  // +
     Minus, // -
-    Times, // *
+    Star,  // *
     Div,   // /
     Mod,   // %
 
-    PlusEquals,  // +=
-    MinusEquals, // -=
+    AddEquals,   // +=
+    SubEquals,   // -=
     TimesEquals, // *=
     DivEquals,   // /=
     ModEquals,   // %=
@@ -77,7 +90,7 @@ pub enum TokenKind {
     LogicalOr,     // ||
     LogicalNot,    // !
 
-    Assign,    // =
+    Equals,    // =
     Dot,       // .
     DoubleDot, // ..
     Comma,     // ,
@@ -94,9 +107,110 @@ pub enum TokenKind {
     RightArrow, // ->
     Ref,        // *.
     Deref,      // .*
+    Pipe,       // |>
 
     LexError { msg: String },
     Eof,
+}
+
+impl fmt::Display for TokenKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use TokenKind::*;
+        match self {
+            // Literals
+            Ident(id) => write!(f, "Identifier({})", id),
+            Str(s) => write!(f, "String({})", s),
+            Char(c) => write!(f, "Character({})", c),
+            Int(i) => write!(f, "Integer({})", i),
+            Float(flt) => write!(f, "Float({})", flt),
+            Bool(b) => write!(f, "Boolean({})", b),
+
+            // Keywords
+            Fn => write!(f, "Fn"),
+            Return => write!(f, "Return"),
+            For => write!(f, "For"),
+            Break => write!(f, "Break"),
+            Continue => write!(f, "Continue"),
+            If => write!(f, "If"),
+            Then => write!(f, "Then"),
+            Case => write!(f, "Case"),
+            Else => write!(f, "Else"),
+
+            U0 => write!(f, "u0 or void"),
+            U8 => write!(f, "u8"),
+            U16 => write!(f, "u16"),
+            U32 => write!(f, "u32"),
+            U64 => write!(f, "u64"),
+            U128 => write!(f, "u128"),
+            I0 => write!(f, "i0 or bool"),
+            I8 => write!(f, "i8"),
+            I16 => write!(f, "i16"),
+            I32 => write!(f, "i32 or int"),
+            I64 => write!(f, "i64"),
+            I128 => write!(f, "i128"),
+            F32 => write!(f, "f32 or float"),
+            F64 => write!(f, "f64"),
+
+            // Operators
+            Plus => write!(f, "+"),
+            Minus => write!(f, "-"),
+            Star => write!(f, "*"),
+            Div => write!(f, "/"),
+            Mod => write!(f, "%"),
+
+            AddEquals => write!(f, "+="),
+            SubEquals => write!(f, "-="),
+            TimesEquals => write!(f, "*="),
+            DivEquals => write!(f, "/="),
+            ModEquals => write!(f, "%="),
+
+            BitwiseAnd => write!(f, "&"),
+            BitwiseOr => write!(f, "|"),
+            BitwiseNot => write!(f, "~"),
+            BitwiseXor => write!(f, "^"),
+            BitwiseShl => write!(f, "<<"),
+            BitwiseShr => write!(f, ">>"),
+
+            BitwiseAndEquals => write!(f, "&="),
+            BitwiseOrEquals => write!(f, "|="),
+            BitwiseNotEquals => write!(f, "~="),
+            BitwiseXorEquals => write!(f, "^="),
+            BitwiseShlEquals => write!(f, "<<="),
+            BitwiseShrEquals => write!(f, ">>="),
+
+            LessThan => write!(f, "<"),
+            GreaterThan => write!(f, ">"),
+            LessEquals => write!(f, "<="),
+            GreaterEquals => write!(f, ">="),
+            IsEqual => write!(f, "=="),
+            IsNotEqual => write!(f, "!="),
+            LogicalAnd => write!(f, "&&"),
+            LogicalOr => write!(f, "||"),
+            LogicalNot => write!(f, "!"),
+
+            Equals => write!(f, "="),
+            Dot => write!(f, "."),
+            DoubleDot => write!(f, ".."),
+            Comma => write!(f, ","),
+            Colon => write!(f, ":"),
+            Semicolon => write!(f, ";"),
+
+            OpenParen => write!(f, "("),
+            CloseParen => write!(f, ")"),
+            OpenCurly => write!(f, "{{"),
+            CloseCurly => write!(f, "}}"),
+            OpenBracket => write!(f, "["),
+            CloseBracket => write!(f, "]"),
+
+            RightArrow => write!(f, "->"),
+            Ref => write!(f, "*."),
+            Deref => write!(f, ".*"),
+            Pipe => write!(f, "|>"),
+
+            LexError { msg } => write!(f, "Lexical Error({})", msg),
+            Eof => write!(f, "End of file"),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -110,6 +224,22 @@ pub struct Location<'a> {
     pub c1: usize,
 }
 
+#[derive(Debug)]
+pub struct Lexer<'a> {
+    // Read-only data
+    input: &'a str,
+    input_path: &'a path::Path,
+
+    // Lexing state
+    input_iter: str::Chars<'a>,
+    current_character_index: usize,
+    current_line_index: usize,
+    current_line_begin_offset: usize,
+
+    tokens_buffer: Vec<Token<'a>>,
+    current_token_offset: usize,
+}
+
 impl<'a> Lexer<'a> {
     pub fn new(input: &'a str, input_path: &'a path::Path) -> Self {
         Self {
@@ -121,30 +251,29 @@ impl<'a> Lexer<'a> {
             current_line_index: 0,
             current_line_begin_offset: 0,
 
-            // @Speedup: Reserve some amount of capacity by default to
-            // avoid re-allocation in the beginning.
-            tokens_buffer: vec![],
+            // The initial capacity is just a heuristic and is prone to change.
+            tokens_buffer: Vec::with_capacity(128),
             current_token_offset: 0,
         }
     }
 
-    pub fn next_token(&mut self) -> &Token<'a> {
+    pub fn next_token(&mut self) -> Token<'a> {
         if self.current_token_offset >= self.tokens_buffer.len() {
             self.advance_token();
         }
-        let result = &self.tokens_buffer[self.current_token_offset];
+        let result = self.tokens_buffer[self.current_token_offset].clone();
         self.current_token_offset += 1;
         result
     }
 
-    pub fn peek_token(&mut self, lookahead_index: usize) -> &Token<'a> {
+    pub fn peek_token(&mut self, lookahead_index: usize) -> Token<'a> {
         while self.current_token_offset + lookahead_index >= self.tokens_buffer.len() {
             self.advance_token();
         }
-        &self.tokens_buffer[self.current_token_offset + lookahead_index]
+        self.tokens_buffer[self.current_token_offset + lookahead_index].clone()
     }
 
-    pub fn peek_next_token(&mut self) -> &Token<'a> {
+    pub fn peek_next_token(&mut self) -> Token<'a> {
         self.peek_token(0)
     }
 
@@ -170,7 +299,7 @@ impl<'a> Lexer<'a> {
 
         eprintln!();
         {
-            let is_tty = std::io::stdout().is_terminal(); // To ensure ansi escape codes are supported.
+            let is_tty = io::stdout().is_terminal(); // To ensure ansi escape codes are supported.
 
             let (ansi_code_cyan, ansi_code_red, ansi_code_reset) = if is_tty {
                 ("\x1b[36m", "\x1b[31m", "\x1b[0m")
@@ -317,18 +446,39 @@ impl<'a> Lexer<'a> {
 
                 match &ident_or_keyword[..] {
                     // Booleans
-                    "true" => TokenKind::BoolLiteral(true),
-                    "false" => TokenKind::BoolLiteral(false),
+                    "true" => TokenKind::Bool(true),
+                    "false" => TokenKind::Bool(false),
 
                     // Floats
-                    "inf" => TokenKind::FloatLiteral(f64::INFINITY),
-                    "nan" => TokenKind::FloatLiteral(f64::NAN),
+                    "inf" => TokenKind::Float(f64::INFINITY),
+                    "nan" => TokenKind::Float(f64::NAN),
 
                     // Keywords
                     "fn" => TokenKind::Fn,
+                    "return" => TokenKind::Return,
                     "for" => TokenKind::For,
+                    "break" => TokenKind::Break,
+                    "continue" => TokenKind::Continue,
                     "if" => TokenKind::If,
+                    "then" => TokenKind::Then,
+                    "case" => TokenKind::Case,
                     "else" => TokenKind::Else,
+
+                    // Types
+                    "u0" | "void" => TokenKind::U0,
+                    "u8" | "char" => TokenKind::U8,
+                    "u16" => TokenKind::U16,
+                    "u32" => TokenKind::U32,
+                    "u64" => TokenKind::U64,
+                    "u128" => TokenKind::U128,
+                    "i0" | "bool" => TokenKind::I0,
+                    "i8" => TokenKind::I8,
+                    "i16" => TokenKind::I16,
+                    "i32" | "int" => TokenKind::I32,
+                    "i64" => TokenKind::I64,
+                    "i128" => TokenKind::I128,
+                    "f32" | "float" => TokenKind::F32,
+                    "f64" => TokenKind::F64,
 
                     _ => TokenKind::Ident(ident_or_keyword),
                 }
@@ -339,7 +489,7 @@ impl<'a> Lexer<'a> {
                 match self.peek_next_character() {
                     Some('=') => {
                         self.next_character();
-                        TokenKind::PlusEquals
+                        TokenKind::AddEquals
                     }
                     _ => TokenKind::Plus,
                 }
@@ -349,7 +499,7 @@ impl<'a> Lexer<'a> {
                 match self.peek_next_character() {
                     Some('=') => {
                         self.next_character();
-                        TokenKind::MinusEquals
+                        TokenKind::SubEquals
                     }
                     Some('>') => {
                         self.next_character();
@@ -379,13 +529,13 @@ impl<'a> Lexer<'a> {
                             // binary multiplication of two floats. So, we leave the `.` untouched to
                             // be lexed as part of the float literal the next time around.
                             //
-                            TokenKind::Times
+                            TokenKind::Star
                         } else {
                             self.next_character();
                             TokenKind::Ref
                         }
                     }
-                    _ => TokenKind::Times,
+                    _ => TokenKind::Star,
                 }
             }
             Some('/') => {
@@ -432,6 +582,10 @@ impl<'a> Lexer<'a> {
                     Some('|') => {
                         self.next_character();
                         TokenKind::LogicalOr
+                    }
+                    Some('>') => {
+                        self.next_character();
+                        TokenKind::Pipe
                     }
                     _ => TokenKind::BitwiseOr,
                 }
@@ -503,7 +657,7 @@ impl<'a> Lexer<'a> {
                         self.next_character();
                         TokenKind::IsEqual
                     }
-                    _ => TokenKind::Assign,
+                    _ => TokenKind::Equals,
                 }
             }
             Some('!') => {
@@ -767,7 +921,7 @@ impl<'a> Lexer<'a> {
                 };
             }
             match result.parse::<f64>() {
-                Ok(v) => TokenKind::FloatLiteral(v),
+                Ok(v) => TokenKind::Float(v),
                 Err(e) => TokenKind::LexError {
                     msg: format!("Error while parsing float literal: `{}`: {}", &result, e)
                         .to_string(),
@@ -775,7 +929,7 @@ impl<'a> Lexer<'a> {
             }
         } else {
             match u128::from_str_radix(&result, base) {
-                Ok(v) => TokenKind::IntLiteral(v),
+                Ok(v) => TokenKind::Int(v),
                 Err(e) => TokenKind::LexError {
                     msg: format!("Error while parsing integer literal: `{}`: {}", &result, e)
                         .to_string(),
@@ -783,6 +937,7 @@ impl<'a> Lexer<'a> {
             }
         }
     }
+
     fn lex_string_literal(&mut self) -> TokenKind {
         let mut result = String::new();
 
@@ -839,7 +994,7 @@ impl<'a> Lexer<'a> {
             }
         }
 
-        TokenKind::StrLiteral(result)
+        TokenKind::Str(result)
     }
 
     fn lex_character_literal(&mut self) -> TokenKind {
@@ -878,7 +1033,7 @@ impl<'a> Lexer<'a> {
         };
 
         match self.next_character() {
-            Some('\'') => TokenKind::CharLiteral(result),
+            Some('\'') => TokenKind::Char(result),
             None => TokenKind::LexError {
                 msg: "Unclosed character literal (unexpected EOF).".to_string(),
             },

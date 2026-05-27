@@ -5,7 +5,7 @@ mod parser;
 
 use std::{env, fs, path, process};
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct Compiler;
 
 impl Compiler {
