@@ -1,4 +1,4 @@
-use crate::lexer;
+use crate::lexer::{self, TokenKind as TK};
 
 use std::{collections::HashMap, path, process};
 
@@ -43,6 +43,10 @@ pub enum AstExpr {
         name: String,
         ty: AstTypeExpr,
     },
+    FnCall {
+        id: String,
+        args: Vec<AstExpr>,
+    },
     UnaryOp {
         op: UnaryOpKind,
         operand: Box<AstExpr>,
@@ -51,10 +55,6 @@ pub enum AstExpr {
         op: BinaryOpKind,
         lhs: Box<AstExpr>,
         rhs: Box<AstExpr>,
-    },
-    FnCall {
-        id: String,
-        args: Vec<AstExpr>,
     },
 }
 
@@ -94,9 +94,9 @@ pub enum AstStmt {
         else_block: Option<AstBlock>,
     },
     For {
-        init: Option<Box<AstStmt>>,
-        cond: Option<Box<AstStmt>>,
-        incr: Option<Box<AstStmt>>,
+        init: Box<Option<AstStmt>>,
+        cond: AstExpr,
+        incr: Box<Option<AstStmt>>,
 
         body: AstBlock,
     },
@@ -177,7 +177,6 @@ impl<'a> Parser<'a> {
             decls: HashMap::new(),
         };
 
-        use lexer::TokenKind as TK;
         loop {
             let tok = self.lexer.peek_next_token();
             match tok.kind {
@@ -189,7 +188,7 @@ impl<'a> Parser<'a> {
                     {
                         self.lexer.report_error_at(
                             tok.loc,
-                            &format!("Redefintion of `{}` at top level.", &id),
+                            &format!("Redefintion of symbol `{}` at top level.", &id),
                         );
                     };
                 }
@@ -197,7 +196,7 @@ impl<'a> Parser<'a> {
                 _ => {
                     self.lexer.report_error_at(
                         tok.loc,
-                        &format!("Expected Identifier but got {}", tok.kind),
+                        &format!("Expected an identifier, found {}", tok),
                     );
                     break;
                 }
@@ -208,8 +207,6 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_decl(&mut self) -> AstDecl {
-        use lexer::TokenKind as TK;
-
         let TK::Ident(name) = self.lexer.next_token().kind else {
             unreachable!()
         };
@@ -223,6 +220,14 @@ impl<'a> Parser<'a> {
             }
             _ => self.parse_type_expr(),
         };
+
+        if self.lexer.peek_next_token().kind == TK::Semicolon {
+            return AstDecl::Var(AstVarDecl {
+                name,
+                ty,
+                value: None,
+            });
+        }
 
         let tok = self.lexer.peek_next_token();
         match tok.kind {
@@ -248,7 +253,10 @@ impl<'a> Parser<'a> {
                             _ => {
                                 self.lexer.report_error_at(
                                     tok.loc,
-                                    &format!("Expected Identifier, `,` or ) but got {}", tok.kind),
+                                    &format!(
+                                        "Expected one of `,`, `)` or an identifier, found {}",
+                                        tok
+                                    ),
                                 );
                                 process::exit(1);
                             }
@@ -263,10 +271,15 @@ impl<'a> Parser<'a> {
                     AstTypeExpr::U0
                 };
 
-                let body = if self.lexer.peek_next_token().kind == TK::OpenCurly {
+                let tok = self.lexer.peek_next_token();
+                let body = if tok.kind == TK::OpenCurly {
                     Some(self.parse_block())
-                } else {
+                } else if tok.kind == TK::Semicolon {
                     None
+                } else {
+                    self.lexer
+                        .report_error_at(tok.loc, &format!("Unexpected token {}", tok));
+                    process::exit(1);
                 };
 
                 AstDecl::Fn(AstFnDecl {
@@ -274,14 +287,6 @@ impl<'a> Parser<'a> {
                     params,
                     return_type,
                     body,
-                })
-            }
-            TK::Semicolon => {
-                self.eat_token();
-                AstDecl::Var(AstVarDecl {
-                    name,
-                    ty,
-                    value: None,
                 })
             }
             _ => AstDecl::Var(AstVarDecl {
@@ -293,8 +298,6 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_fn_param(&mut self) -> AstParam {
-        use lexer::TokenKind as TK;
-
         let TK::Ident(name) = self.lexer.next_token().kind else {
             unreachable!()
         };
@@ -319,10 +322,13 @@ impl<'a> Parser<'a> {
 
     fn parse_block(&mut self) -> AstBlock {
         self.expect_token(lexer::TokenKind::OpenCurly);
-        let mut block: AstBlock = Vec::new();
+        let mut block: AstBlock = vec![];
 
         while self.lexer.peek_next_token().kind != lexer::TokenKind::CloseCurly {
             block.push(self.parse_statement());
+            if self.lexer.last_token().kind != lexer::TokenKind::CloseCurly {
+                self.expect_token(lexer::TokenKind::Semicolon);
+            }
         }
         self.expect_token(lexer::TokenKind::CloseCurly);
         block
@@ -331,7 +337,6 @@ impl<'a> Parser<'a> {
     fn parse_statement(&mut self) -> AstStmt {
         let tok = self.lexer.peek_next_token();
 
-        use lexer::TokenKind as TK;
         match tok.kind {
             TK::Ident(_) if self.lexer.peek_token(1).kind == TK::Colon => {
                 AstStmt::Decl(self.parse_decl())
@@ -340,33 +345,50 @@ impl<'a> Parser<'a> {
             TK::For => {
                 self.eat_token();
 
-                let init_statement = self.parse_statement();
+                let init_statement = if self.lexer.peek_next_token().kind == TK::Semicolon {
+                    None
+                } else {
+                    Some(self.parse_statement())
+                };
                 self.expect_token(TK::Semicolon);
 
-                let cond_statement = self.parse_statement();
+                let cond_expr = self.parse_expr();
                 self.expect_token(TK::Semicolon);
 
-                let incr_statement = self.parse_statement();
+                let incr_statement = if self.lexer.peek_next_token().kind == TK::OpenCurly {
+                    None
+                } else {
+                    Some(self.parse_statement())
+                };
 
                 let if_block = self.parse_block();
 
                 AstStmt::For {
-                    init: Some(Box::new(init_statement)),
-                    cond: Some(Box::new(cond_statement)),
-                    incr: Some(Box::new(incr_statement)),
+                    init: Box::new(init_statement),
+                    cond: cond_expr,
+                    incr: Box::new(incr_statement),
                     body: if_block,
                 }
             }
             TK::If => {
                 self.eat_token();
+
                 let cond = self.parse_expr();
-                let then_block = self.parse_block();
+
+                let mut then_block: AstBlock = vec![];
+                if self.lexer.peek_next_token().kind == TK::OpenCurly {
+                    then_block = self.parse_block();
+                } else {
+                    then_block.push(self.parse_statement());
+                }
+
                 let else_block = if self.lexer.peek_next_token().kind == TK::Else {
                     self.eat_token();
                     Some(self.parse_block())
                 } else {
                     None
                 };
+
                 AstStmt::If {
                     cond,
                     then_block,
@@ -396,6 +418,7 @@ impl<'a> Parser<'a> {
                     TK::BitwiseShrEquals => AssignOpKind::BitwiseShr,
                     _ => return AstStmt::Expr(expr1),
                 };
+                self.eat_token();
                 let expr2 = self.parse_expr();
                 AstStmt::Assign {
                     op,
@@ -407,8 +430,6 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_var_decl(&mut self) -> AstVarDecl {
-        use lexer::TokenKind as TK;
-
         let TK::Ident(name) = self.lexer.next_token().kind else {
             unreachable!()
         };
@@ -432,15 +453,177 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_expr(&mut self) -> AstExpr {
-        let tok = self.lexer.next_token();
+        self.parse_expr_bp(0)
+    }
 
-        self.lexer.report_error_at(tok.loc, "");
-        todo!()
+    fn parse_expr_bp(&mut self, bp: usize) -> AstExpr {
+        let tok = self.lexer.peek_next_token();
+
+        let mut lhs = match tok.kind {
+            TK::StrLit(s) => {
+                self.eat_token();
+                AstExpr::Str(s)
+            }
+            TK::CharLit(c) => {
+                self.eat_token();
+                AstExpr::Char(c)
+            }
+            TK::IntLit(i) => {
+                self.eat_token();
+                AstExpr::Int(i)
+            }
+            TK::FloatLit(f) => {
+                self.eat_token();
+                AstExpr::Float(f)
+            }
+            TK::BoolLit(b) => {
+                self.eat_token();
+                AstExpr::Bool(b)
+            }
+            TK::Ident(_) if self.lexer.peek_token(1).kind == TK::OpenParen => self.parse_fn_call(),
+            TK::Ident(id) => {
+                self.eat_token();
+                AstExpr::Var {
+                    name: id,
+                    ty: AstTypeExpr::Unknown,
+                }
+            }
+            TK::OpenParen => {
+                self.eat_token();
+                let expr = self.parse_expr();
+                self.expect_token(TK::CloseParen);
+                expr
+            }
+            TK::Plus => {
+                self.eat_token();
+                AstExpr::UnaryOp {
+                    op: UnaryOpKind::Plus,
+                    operand: Box::new(self.parse_expr_bp(30)),
+                }
+            }
+            TK::Minus => {
+                self.eat_token();
+                AstExpr::UnaryOp {
+                    op: UnaryOpKind::Minus,
+                    operand: Box::new(self.parse_expr_bp(30)),
+                }
+            }
+            TK::BitwiseNot => {
+                self.eat_token();
+                AstExpr::UnaryOp {
+                    op: UnaryOpKind::BitwiseNot,
+                    operand: Box::new(self.parse_expr_bp(30)),
+                }
+            }
+            TK::LogicalNot => {
+                self.eat_token();
+                AstExpr::UnaryOp {
+                    op: UnaryOpKind::LogicalNot,
+                    operand: Box::new(self.parse_expr_bp(30)),
+                }
+            }
+            TK::Ref => {
+                self.eat_token();
+                AstExpr::UnaryOp {
+                    op: UnaryOpKind::Ref,
+                    operand: Box::new(self.parse_expr_bp(30)),
+                }
+            }
+            _ => {
+                self.lexer
+                    .report_error_at(tok.loc, &format!("Unexpected token {}", tok));
+                process::exit(1);
+            }
+        };
+
+        loop {
+            if self.lexer.peek_next_token().kind == TK::Deref {
+                self.eat_token();
+                lhs = AstExpr::UnaryOp {
+                    op: UnaryOpKind::Deref,
+                    operand: Box::new(lhs),
+                };
+                continue;
+            }
+
+            let (lbp, rbp) = match self.lexer.peek_next_token().kind {
+                TK::LogicalOr => (7, 8),
+                TK::LogicalAnd => (9, 10),
+                TK::IsEqual | TK::IsNotEqual => (11, 12),
+                TK::LessThan | TK::LessEquals | TK::GreaterThan | TK::GreaterEquals => (13, 14),
+                TK::BitwiseOr => (15, 16),
+                TK::BitwiseXor => (17, 18),
+                TK::BitwiseAnd => (19, 20),
+                TK::BitwiseShl | TK::BitwiseShr => (21, 22),
+                TK::Plus | TK::Minus => (23, 24),
+                TK::Star | TK::Div | TK::Mod => (25, 26),
+                _ => break,
+            };
+            if lbp < bp {
+                break;
+            }
+
+            let tok = self.lexer.next_token();
+            let op = match tok.kind {
+                TK::Plus => BinaryOpKind::Add,
+                TK::Minus => BinaryOpKind::Sub,
+                TK::Star => BinaryOpKind::Mul,
+                TK::Div => BinaryOpKind::Div,
+                TK::Mod => BinaryOpKind::Mod,
+                TK::BitwiseAnd => BinaryOpKind::BitwiseAnd,
+                TK::BitwiseOr => BinaryOpKind::BitwiseOr,
+                TK::BitwiseXor => BinaryOpKind::BitwiseXor,
+                TK::BitwiseShl => BinaryOpKind::BitwiseShl,
+                TK::BitwiseShr => BinaryOpKind::BitwiseShr,
+                TK::LessThan => BinaryOpKind::LessThan,
+                TK::GreaterThan => BinaryOpKind::GreaterThan,
+                TK::LessEquals => BinaryOpKind::LessEquals,
+                TK::GreaterEquals => BinaryOpKind::GreaterEquals,
+                TK::IsEqual => BinaryOpKind::IsEqual,
+                TK::IsNotEqual => BinaryOpKind::IsNotEqual,
+                TK::LogicalAnd => BinaryOpKind::LogicalAnd,
+                TK::LogicalOr => BinaryOpKind::LogicalOr,
+                _ => unreachable!(),
+            };
+            let rhs = self.parse_expr_bp(rbp);
+
+            lhs = AstExpr::BinaryOp {
+                op,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            };
+        }
+
+        lhs
+    }
+
+    fn parse_fn_call(&mut self) -> AstExpr {
+        let TK::Ident(id) = self.lexer.next_token().kind else {
+            unreachable!()
+        };
+
+        let mut args: Vec<AstExpr> = vec![];
+        self.expect_token(TK::OpenParen);
+        loop {
+            match self.lexer.peek_next_token().kind {
+                TK::Comma => {
+                    self.eat_token();
+                    continue;
+                }
+                TK::CloseParen => {
+                    self.eat_token();
+                    break;
+                }
+                _ => args.push(self.parse_expr()),
+            }
+        }
+
+        AstExpr::FnCall { id, args }
     }
 
     fn parse_type_expr(&mut self) -> AstTypeExpr {
         let tok = self.lexer.next_token();
-        use lexer::TokenKind as TK;
+
         match tok.kind {
             TK::U0 => AstTypeExpr::U0,
             TK::U8 => AstTypeExpr::U8,
@@ -463,7 +646,7 @@ impl<'a> Parser<'a> {
             }
             _ => {
                 self.lexer
-                    .report_error_at(tok.loc, &format!("Unexpected token {}", tok.kind));
+                    .report_error_at(tok.loc, &format!("Unexpected token {}", tok));
                 process::exit(1);
             }
         }
@@ -479,10 +662,7 @@ impl<'a> Parser<'a> {
         if next_token.kind != expected_token_kind {
             self.lexer.report_error_at(
                 next_token.loc,
-                &format!(
-                    "Expected {} but got {}",
-                    expected_token_kind, next_token.kind
-                ),
+                &format!("Expected `{}`, found {}", expected_token_kind, next_token),
             );
             process::exit(1);
         }

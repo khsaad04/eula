@@ -8,11 +8,20 @@ use std::{
 pub struct Token<'a> {
     pub kind: TokenKind,
     pub loc: Location<'a>,
+    pub lexeme: &'a str,
 }
 
 impl fmt::Display for Token<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.kind)
+        use TokenKind::*;
+        match self.kind {
+            Ident(_) | IntLit(_) | FloatLit(_) | BoolLit(_) | Fn | Return | For | Break
+            | Continue | If | Else | U0 | U8 | U16 | U32 | U64 | U128 | I0 | I8 | I16 | I32
+            | I64 | I128 | F32 | F64 => write!(f, "{} `{}`", self.kind, self.lexeme),
+            StrLit(_) | CharLit(_) => write!(f, "{} {}", self.kind, self.lexeme),
+            Eof | LexError { .. } => write!(f, "{}", self.kind),
+            _ => write!(f, "`{}`", self.kind),
+        }
     }
 }
 
@@ -20,11 +29,11 @@ impl fmt::Display for Token<'_> {
 pub enum TokenKind {
     // Literals
     Ident(String),
-    Str(String),
-    Char(u8),
-    Int(u128),
-    Float(f64),
-    Bool(bool),
+    StrLit(String),
+    CharLit(u8),
+    IntLit(u128),
+    FloatLit(f64),
+    BoolLit(bool),
 
     // Keywords
     Fn,
@@ -33,11 +42,8 @@ pub enum TokenKind {
     Break,
     Continue,
     If,
-    Then,
-    Case,
     Else,
 
-    // Types
     U0, // alias: void
     U8, // alias: char
     U16,
@@ -107,7 +113,6 @@ pub enum TokenKind {
     RightArrow, // ->
     Ref,        // *.
     Deref,      // .*
-    Pipe,       // |>
 
     LexError { msg: String },
     Eof,
@@ -118,38 +123,19 @@ impl fmt::Display for TokenKind {
         use TokenKind::*;
         match self {
             // Literals
-            Ident(id) => write!(f, "Identifier({})", id),
-            Str(s) => write!(f, "String({})", s),
-            Char(c) => write!(f, "Character({})", c),
-            Int(i) => write!(f, "Integer({})", i),
-            Float(flt) => write!(f, "Float({})", flt),
-            Bool(b) => write!(f, "Boolean({})", b),
+            Ident(_) => write!(f, "identifier"),
+            StrLit(_) => write!(f, "string"),
+            CharLit(_) => write!(f, "character"),
+            IntLit(_) => write!(f, "integer"),
+            FloatLit(_) => write!(f, "float"),
+            BoolLit(_) => write!(f, "boolean"),
 
             // Keywords
-            Fn => write!(f, "Fn"),
-            Return => write!(f, "Return"),
-            For => write!(f, "For"),
-            Break => write!(f, "Break"),
-            Continue => write!(f, "Continue"),
-            If => write!(f, "If"),
-            Then => write!(f, "Then"),
-            Case => write!(f, "Case"),
-            Else => write!(f, "Else"),
+            Fn | Return | For | Break | Continue | If | Else | U0 | U8 | U16 | U32 | U64 | U128
+            | I0 | I8 | I16 | I32 | I64 | I128 | F32 | F64 => write!(f, "keyword"),
 
-            U0 => write!(f, "u0 or void"),
-            U8 => write!(f, "u8"),
-            U16 => write!(f, "u16"),
-            U32 => write!(f, "u32"),
-            U64 => write!(f, "u64"),
-            U128 => write!(f, "u128"),
-            I0 => write!(f, "i0 or bool"),
-            I8 => write!(f, "i8"),
-            I16 => write!(f, "i16"),
-            I32 => write!(f, "i32 or int"),
-            I64 => write!(f, "i64"),
-            I128 => write!(f, "i128"),
-            F32 => write!(f, "f32 or float"),
-            F64 => write!(f, "f64"),
+            LexError { msg } => write!(f, "lexical error: {}", msg),
+            Eof => write!(f, "end of file"),
 
             // Operators
             Plus => write!(f, "+"),
@@ -205,15 +191,11 @@ impl fmt::Display for TokenKind {
             RightArrow => write!(f, "->"),
             Ref => write!(f, "*."),
             Deref => write!(f, ".*"),
-            Pipe => write!(f, "|>"),
-
-            LexError { msg } => write!(f, "Lexical Error({})", msg),
-            Eof => write!(f, "End of file"),
         }
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Location<'a> {
     pub input_path: &'a path::Path,
 
@@ -277,6 +259,10 @@ impl<'a> Lexer<'a> {
         self.peek_token(0)
     }
 
+    pub fn last_token(&self) -> Token<'a> {
+        self.tokens_buffer[self.current_token_offset - 1].clone()
+    }
+
     pub fn report_error_at(&self, loc: Location, msg: &str) {
         if loc.l0 == loc.l1 {
             assert!(
@@ -298,107 +284,85 @@ impl<'a> Lexer<'a> {
         );
 
         eprintln!();
+        let is_tty = io::stdout().is_terminal(); // To ensure ansi escape codes are supported.
+
+        let (ansi_code_cyan, ansi_code_red, ansi_code_reset) = if is_tty {
+            ("\x1b[36m", "\x1b[31m", "\x1b[0m")
+        } else {
+            ("", "", "")
+        };
+
+        let padding = format!("{}", loc.l1 + 2).len();
+
+        // Previous line
+        if loc.l0 > 0
+            && let Some(previous_line) = &self.input.lines().nth(loc.l0 - 1)
         {
-            let is_tty = io::stdout().is_terminal(); // To ensure ansi escape codes are supported.
+            eprintln!(
+                "{LINE_NO:>PAD$} | {CYAN}{}{RESET}",
+                previous_line,
+                LINE_NO = loc.l0,
+                PAD = padding,
+                CYAN = ansi_code_cyan,
+                RESET = ansi_code_reset,
+            );
+        }
 
-            let (ansi_code_cyan, ansi_code_red, ansi_code_reset) = if is_tty {
-                ("\x1b[36m", "\x1b[31m", "\x1b[0m")
-            } else {
-                ("", "", "")
-            };
+        // Actually relevant line(s)
 
-            let padding = format!("{}", loc.l1 + 2).len();
-
-            // Previous line
-            if loc.l0 > 0
-                && let Some(previous_line) = &self.input.lines().nth(loc.l0 - 1)
-            {
+        // @Note: It's okay to panic if any of the unwraps fail here.
+        // That would mean there is a bug somewhere else.
+        if loc.l0 == loc.l1 {
+            let current_line = &self.input.lines().nth(loc.l0).unwrap();
+            eprintln!(
+                "{LINE_NO:>PAD$} | {CYAN}{}{RED}{}{CYAN}{}{RESET}",
+                &current_line[..loc.c0],
+                &current_line[loc.c0..loc.c1 + 1],
+                &current_line[loc.c1 + 1..],
+                LINE_NO = loc.l0 + 1,
+                PAD = padding,
+                CYAN = ansi_code_cyan,
+                RED = ansi_code_red,
+                RESET = ansi_code_reset,
+            );
+            if !is_tty {
                 eprintln!(
-                    "{LINE_NO:>PAD$} | {CYAN}{}{RESET}",
-                    previous_line,
-                    LINE_NO = loc.l0,
+                    "{LINE_NO:>PAD$} | {SPACES}{ARROWS}",
+                    LINE_NO = "",
                     PAD = padding,
-                    CYAN = ansi_code_cyan,
-                    RESET = ansi_code_reset,
+                    SPACES = " ".repeat(loc.c0),
+                    ARROWS = "^".repeat(loc.c1 - loc.c0 + 1)
+                );
+            }
+        } else {
+            let first_line = &self.input.lines().nth(loc.l0).unwrap();
+            eprintln!(
+                "{LINE_NO:>PAD$} | {CYAN}{}{RED}{}{RESET}",
+                &first_line[..loc.c0],
+                &first_line[loc.c0..],
+                LINE_NO = loc.l0 + 1,
+                PAD = padding,
+                CYAN = ansi_code_cyan,
+                RED = ansi_code_red,
+                RESET = ansi_code_reset,
+            );
+            if !is_tty {
+                eprintln!(
+                    "{LINE_NO:>PAD$} | {SPACES}{ARROWS}",
+                    LINE_NO = "",
+                    PAD = padding,
+                    SPACES = " ".repeat(loc.c0),
+                    ARROWS = "^".repeat(first_line.chars().count() - loc.c0)
                 );
             }
 
-            // Actually relevant line(s)
-
-            // @Note: It's okay to panic if any of the unwraps fail here.
-            // That would mean there is a bug somewhere else.
-            if loc.l0 == loc.l1 {
-                let current_line = &self.input.lines().nth(loc.l0).unwrap();
+            for i in 1..(loc.l1 - loc.l0) {
+                let middle_line = &self.input.lines().nth(loc.l0 + i).unwrap();
                 eprintln!(
-                    "{LINE_NO:>PAD$} | {CYAN}{}{RED}{}{CYAN}{}{RESET}",
-                    &current_line[..loc.c0],
-                    &current_line[loc.c0..loc.c1 + 1],
-                    &current_line[loc.c1 + 1..],
-                    LINE_NO = loc.l0 + 1,
+                    "{LINE_NO:>PAD$} | {RED}{}{RESET}",
+                    &middle_line[..],
+                    LINE_NO = loc.l0 + i + 1,
                     PAD = padding,
-                    CYAN = ansi_code_cyan,
-                    RED = ansi_code_red,
-                    RESET = ansi_code_reset,
-                );
-                if !is_tty {
-                    eprintln!(
-                        "{LINE_NO:>PAD$} | {SPACES}{ARROWS}",
-                        LINE_NO = "",
-                        PAD = padding,
-                        SPACES = " ".repeat(loc.c0),
-                        ARROWS = "^".repeat(loc.c1 - loc.c0 + 1)
-                    );
-                }
-            } else {
-                let first_line = &self.input.lines().nth(loc.l0).unwrap();
-                eprintln!(
-                    "{LINE_NO:>PAD$} | {CYAN}{}{RED}{}{RESET}",
-                    &first_line[..loc.c0],
-                    &first_line[loc.c0..],
-                    LINE_NO = loc.l0 + 1,
-                    PAD = padding,
-                    CYAN = ansi_code_cyan,
-                    RED = ansi_code_red,
-                    RESET = ansi_code_reset,
-                );
-                if !is_tty {
-                    eprintln!(
-                        "{LINE_NO:>PAD$} | {SPACES}{ARROWS}",
-                        LINE_NO = "",
-                        PAD = padding,
-                        SPACES = " ".repeat(loc.c0),
-                        ARROWS = "^".repeat(first_line.chars().count() - loc.c0)
-                    );
-                }
-
-                for i in 1..(loc.l1 - loc.l0) {
-                    let middle_line = &self.input.lines().nth(loc.l0 + i).unwrap();
-                    eprintln!(
-                        "{LINE_NO:>PAD$} | {RED}{}{RESET}",
-                        &middle_line[..],
-                        LINE_NO = loc.l0 + i + 1,
-                        PAD = padding,
-                        RED = ansi_code_red,
-                        RESET = ansi_code_reset,
-                    );
-                    if !is_tty {
-                        eprintln!(
-                            "{LINE_NO:>PAD$} | {ARROWS}",
-                            LINE_NO = "",
-                            PAD = padding,
-                            ARROWS = "^".repeat(middle_line.chars().count())
-                        );
-                    }
-                }
-
-                let last_line = &self.input.lines().nth(loc.l1).unwrap();
-                eprintln!(
-                    "{LINE_NO:>PAD$} | {RED}{}{CYAN}{}{RESET}",
-                    &last_line[..=loc.c1],
-                    &last_line[loc.c1 + 1..],
-                    LINE_NO = loc.l1 + 1,
-                    PAD = padding,
-                    CYAN = ansi_code_cyan,
                     RED = ansi_code_red,
                     RESET = ansi_code_reset,
                 );
@@ -407,22 +371,42 @@ impl<'a> Lexer<'a> {
                         "{LINE_NO:>PAD$} | {ARROWS}",
                         LINE_NO = "",
                         PAD = padding,
-                        ARROWS = "^".repeat(loc.c1 + 1)
+                        ARROWS = "^".repeat(middle_line.chars().count())
                     );
                 }
             }
 
-            // Next line
-            if let Some(next_line) = &self.input.lines().nth(loc.l1 + 1) {
+            let last_line = &self.input.lines().nth(loc.l1).unwrap();
+            eprintln!(
+                "{LINE_NO:>PAD$} | {RED}{}{CYAN}{}{RESET}",
+                &last_line[..=loc.c1],
+                &last_line[loc.c1 + 1..],
+                LINE_NO = loc.l1 + 1,
+                PAD = padding,
+                CYAN = ansi_code_cyan,
+                RED = ansi_code_red,
+                RESET = ansi_code_reset,
+            );
+            if !is_tty {
                 eprintln!(
-                    "{LINE_NO:>PAD$} | {CYAN}{}{RESET}",
-                    next_line,
-                    LINE_NO = loc.l1 + 2,
+                    "{LINE_NO:>PAD$} | {ARROWS}",
+                    LINE_NO = "",
                     PAD = padding,
-                    CYAN = ansi_code_cyan,
-                    RESET = ansi_code_reset,
+                    ARROWS = "^".repeat(loc.c1 + 1)
                 );
             }
+        }
+
+        // Next line
+        if let Some(next_line) = &self.input.lines().nth(loc.l1 + 1) {
+            eprintln!(
+                "{LINE_NO:>PAD$} | {CYAN}{}{RESET}",
+                next_line,
+                LINE_NO = loc.l1 + 2,
+                PAD = padding,
+                CYAN = ansi_code_cyan,
+                RESET = ansi_code_reset,
+            );
         }
         eprintln!();
     }
@@ -431,6 +415,7 @@ impl<'a> Lexer<'a> {
         self.eat_whitespaces();
         self.eat_comments();
 
+        let start = self.current_character_index;
         let l0 = self.current_line_index;
         let c0 = self.current_character_index - self.current_line_begin_offset;
 
@@ -446,12 +431,12 @@ impl<'a> Lexer<'a> {
 
                 match &ident_or_keyword[..] {
                     // Booleans
-                    "true" => TokenKind::Bool(true),
-                    "false" => TokenKind::Bool(false),
+                    "true" => TokenKind::BoolLit(true),
+                    "false" => TokenKind::BoolLit(false),
 
                     // Floats
-                    "inf" => TokenKind::Float(f64::INFINITY),
-                    "nan" => TokenKind::Float(f64::NAN),
+                    "inf" => TokenKind::FloatLit(f64::INFINITY),
+                    "nan" => TokenKind::FloatLit(f64::NAN),
 
                     // Keywords
                     "fn" => TokenKind::Fn,
@@ -460,8 +445,6 @@ impl<'a> Lexer<'a> {
                     "break" => TokenKind::Break,
                     "continue" => TokenKind::Continue,
                     "if" => TokenKind::If,
-                    "then" => TokenKind::Then,
-                    "case" => TokenKind::Case,
                     "else" => TokenKind::Else,
 
                     // Types
@@ -582,10 +565,6 @@ impl<'a> Lexer<'a> {
                     Some('|') => {
                         self.next_character();
                         TokenKind::LogicalOr
-                    }
-                    Some('>') => {
-                        self.next_character();
-                        TokenKind::Pipe
                     }
                     _ => TokenKind::BitwiseOr,
                 }
@@ -746,6 +725,7 @@ impl<'a> Lexer<'a> {
             0
         };
 
+        let end = self.current_character_index;
         if l0 == l1 {
             assert!(c0 <= c1);
         }
@@ -760,81 +740,8 @@ impl<'a> Lexer<'a> {
                 l1,
                 c1,
             },
+            lexeme: &self.input[start..end],
         });
-    }
-
-    fn next_character(&mut self) -> Option<char> {
-        let result = self.input_iter.next();
-        if result.is_some() {
-            self.current_character_index += 1;
-        }
-        if let Some(c) = result
-            && c == '\n'
-        {
-            self.current_line_index += 1;
-            self.current_line_begin_offset = self.current_character_index;
-        }
-        result
-    }
-
-    fn peek_character(&self, lookahead_index: usize) -> Option<char> {
-        let mut iter = self.input_iter.clone();
-        for _ in 0..lookahead_index {
-            iter.next();
-        }
-        iter.next()
-    }
-
-    fn peek_next_character(&self) -> Option<char> {
-        self.peek_character(0)
-    }
-
-    fn eat_whitespaces(&mut self) {
-        while let Some(c) = self.peek_next_character()
-            && c.is_whitespace()
-        {
-            self.next_character();
-        }
-    }
-
-    fn eat_comments(&mut self) {
-        loop {
-            if self.input_iter.as_str().starts_with("//") {
-                // eat the leading `//`
-                self.next_character();
-                self.next_character();
-
-                while let Some(c) = self.peek_next_character()
-                    && c != '\n'
-                {
-                    self.next_character();
-                }
-            } else if self.input_iter.as_str().starts_with("/*") {
-                // eat the leading `/*`
-                self.next_character();
-                self.next_character();
-
-                let mut depth_count = 1;
-                while let Some(c) = self.peek_next_character()
-                    && depth_count > 0
-                {
-                    if c == '*' {
-                        self.next_character();
-                        if self.peek_next_character() == Some('/') {
-                            depth_count -= 1;
-                        }
-                    } else if c == '/' {
-                        self.next_character();
-                        if self.peek_next_character() == Some('*') {
-                            depth_count += 1;
-                        }
-                    }
-                }
-            } else {
-                break;
-            }
-            self.eat_whitespaces();
-        }
     }
 
     fn lex_numeric_literal(&mut self) -> TokenKind {
@@ -921,7 +828,7 @@ impl<'a> Lexer<'a> {
                 };
             }
             match result.parse::<f64>() {
-                Ok(v) => TokenKind::Float(v),
+                Ok(v) => TokenKind::FloatLit(v),
                 Err(e) => TokenKind::LexError {
                     msg: format!("Error while parsing float literal: `{}`: {}", &result, e)
                         .to_string(),
@@ -929,7 +836,7 @@ impl<'a> Lexer<'a> {
             }
         } else {
             match u128::from_str_radix(&result, base) {
-                Ok(v) => TokenKind::Int(v),
+                Ok(v) => TokenKind::IntLit(v),
                 Err(e) => TokenKind::LexError {
                     msg: format!("Error while parsing integer literal: `{}`: {}", &result, e)
                         .to_string(),
@@ -994,7 +901,7 @@ impl<'a> Lexer<'a> {
             }
         }
 
-        TokenKind::Str(result)
+        TokenKind::StrLit(result)
     }
 
     fn lex_character_literal(&mut self) -> TokenKind {
@@ -1033,15 +940,12 @@ impl<'a> Lexer<'a> {
         };
 
         match self.next_character() {
-            Some('\'') => TokenKind::Char(result),
+            Some('\'') => TokenKind::CharLit(result),
             None => TokenKind::LexError {
                 msg: "Unclosed character literal (unexpected EOF).".to_string(),
             },
-            Some(c) => TokenKind::LexError {
-                msg: format!(
-                    "Character literal contains more than one character: `{}`",
-                    c
-                ),
+            Some(_) => TokenKind::LexError {
+                msg: "Character literal contains more than one character.".to_string(),
             },
         }
     }
@@ -1058,6 +962,74 @@ impl<'a> Lexer<'a> {
             }
         }
         Ok(char::from_u32(result).unwrap_or('\0'))
+    }
+
+    fn next_character(&mut self) -> Option<char> {
+        if let Some(c) = self.peek_next_character() {
+            self.current_character_index += 1;
+            if c == '\n' {
+                self.current_line_index += 1;
+                self.current_line_begin_offset = self.current_character_index;
+            }
+        }
+        self.input_iter.next()
+    }
+
+    fn peek_next_character(&self) -> Option<char> {
+        self.peek_character(0)
+    }
+
+    fn peek_character(&self, lookahead_index: usize) -> Option<char> {
+        let mut iter = self.input_iter.clone();
+        iter.nth(lookahead_index)
+    }
+
+    fn eat_whitespaces(&mut self) {
+        while let Some(c) = self.peek_next_character()
+            && c.is_whitespace()
+        {
+            self.next_character();
+        }
+    }
+
+    fn eat_comments(&mut self) {
+        loop {
+            if self.input_iter.as_str().starts_with("//") {
+                // eat the leading `//`
+                self.next_character();
+                self.next_character();
+
+                while let Some(c) = self.peek_next_character()
+                    && c != '\n'
+                {
+                    self.next_character();
+                }
+            } else if self.input_iter.as_str().starts_with("/*") {
+                // eat the leading `/*`
+                self.next_character();
+                self.next_character();
+
+                let mut depth_count = 1;
+                while let Some(c) = self.peek_next_character()
+                    && depth_count > 0
+                {
+                    if c == '*' {
+                        self.next_character();
+                        if self.peek_next_character() == Some('/') {
+                            depth_count -= 1;
+                        }
+                    } else if c == '/' {
+                        self.next_character();
+                        if self.peek_next_character() == Some('*') {
+                            depth_count += 1;
+                        }
+                    }
+                }
+            } else {
+                break;
+            }
+            self.eat_whitespaces();
+        }
     }
 }
 

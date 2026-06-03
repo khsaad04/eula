@@ -1,9 +1,11 @@
 main :: fn {
     // Initialized to 0 by default.
-    a, b, c: int;
+    a: int;
+    b: int;
+    c: int;
     b = 1;
 
-    for a < 1_000_000 {
+    for ; a < 1_000_000 ; {
         printf("%d\n", a);
         c = a + b;
         a = b;
