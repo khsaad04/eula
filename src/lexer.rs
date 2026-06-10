@@ -1,216 +1,15 @@
+use crate::token::{self, TokenKind as TK, ValueKind as VK};
+
 use std::{
-    fmt,
     io::{self, IsTerminal},
     path, str,
 };
 
-#[derive(Debug, Clone)]
-pub struct Token<'a> {
-    pub kind: TokenKind,
-    pub loc: Location<'a>,
-    pub lexeme: &'a str,
-}
-
-impl fmt::Display for Token<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        use TokenKind::*;
-        match self.kind {
-            Ident(_) | IntLit(_) | FloatLit(_) | BoolLit(_) | Fn | Return | For | Break
-            | Continue | If | Else | U0 | U8 | U16 | U32 | U64 | U128 | I0 | I8 | I16 | I32
-            | I64 | I128 | F32 | F64 => write!(f, "{} `{}`", self.kind, self.lexeme),
-            StrLit(_) | CharLit(_) => write!(f, "{} {}", self.kind, self.lexeme),
-            Eof | LexError { .. } => write!(f, "{}", self.kind),
-            _ => write!(f, "`{}`", self.kind),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum TokenKind {
-    // Literals
-    Ident(String),
-    StrLit(String),
-    CharLit(u8),
-    IntLit(u128),
-    FloatLit(f64),
-    BoolLit(bool),
-
-    // Keywords
-    Fn,
-    Return,
-    For,
-    Break,
-    Continue,
-    If,
-    Else,
-
-    U0, // alias: void
-    U8, // alias: char
-    U16,
-    U32,
-    U64,
-    U128,
-    I0, // alias: bool
-    I8,
-    I16,
-    I32, // alias: int
-    I64,
-    I128,
-    F32, // alias: float
-    F64,
-
-    // Operators
-    Plus,  // +
-    Minus, // -
-    Star,  // *
-    Div,   // /
-    Mod,   // %
-
-    AddEquals,   // +=
-    SubEquals,   // -=
-    TimesEquals, // *=
-    DivEquals,   // /=
-    ModEquals,   // %=
-
-    BitwiseAnd, // &
-    BitwiseOr,  // |
-    BitwiseNot, // ~
-    BitwiseXor, // ^
-    BitwiseShl, // <<
-    BitwiseShr, // >>
-
-    BitwiseAndEquals, // &=
-    BitwiseOrEquals,  // |=
-    BitwiseNotEquals, // ~=
-    BitwiseXorEquals, // ^=
-    BitwiseShlEquals, // <<=
-    BitwiseShrEquals, // >>=
-
-    LessThan,      // <
-    GreaterThan,   // >
-    LessEquals,    // <=
-    GreaterEquals, // >=
-    IsEqual,       // ==
-    IsNotEqual,    // !=
-    LogicalAnd,    // &&
-    LogicalOr,     // ||
-    LogicalNot,    // !
-
-    Equals,    // =
-    Dot,       // .
-    DoubleDot, // ..
-    Comma,     // ,
-    Colon,     // :
-    Semicolon, // ;
-
-    OpenParen,    // (
-    CloseParen,   // )
-    OpenCurly,    // {
-    CloseCurly,   // }
-    OpenBracket,  // [
-    CloseBracket, // ]
-
-    RightArrow, // ->
-    Ref,        // *.
-    Deref,      // .*
-
-    LexError { msg: String },
-    Eof,
-}
-
-impl fmt::Display for TokenKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        use TokenKind::*;
-        match self {
-            // Literals
-            Ident(_) => write!(f, "identifier"),
-            StrLit(_) => write!(f, "string"),
-            CharLit(_) => write!(f, "character"),
-            IntLit(_) => write!(f, "integer"),
-            FloatLit(_) => write!(f, "float"),
-            BoolLit(_) => write!(f, "boolean"),
-
-            // Keywords
-            Fn | Return | For | Break | Continue | If | Else | U0 | U8 | U16 | U32 | U64 | U128
-            | I0 | I8 | I16 | I32 | I64 | I128 | F32 | F64 => write!(f, "keyword"),
-
-            LexError { msg } => write!(f, "lexical error: {}", msg),
-            Eof => write!(f, "end of file"),
-
-            // Operators
-            Plus => write!(f, "+"),
-            Minus => write!(f, "-"),
-            Star => write!(f, "*"),
-            Div => write!(f, "/"),
-            Mod => write!(f, "%"),
-
-            AddEquals => write!(f, "+="),
-            SubEquals => write!(f, "-="),
-            TimesEquals => write!(f, "*="),
-            DivEquals => write!(f, "/="),
-            ModEquals => write!(f, "%="),
-
-            BitwiseAnd => write!(f, "&"),
-            BitwiseOr => write!(f, "|"),
-            BitwiseNot => write!(f, "~"),
-            BitwiseXor => write!(f, "^"),
-            BitwiseShl => write!(f, "<<"),
-            BitwiseShr => write!(f, ">>"),
-
-            BitwiseAndEquals => write!(f, "&="),
-            BitwiseOrEquals => write!(f, "|="),
-            BitwiseNotEquals => write!(f, "~="),
-            BitwiseXorEquals => write!(f, "^="),
-            BitwiseShlEquals => write!(f, "<<="),
-            BitwiseShrEquals => write!(f, ">>="),
-
-            LessThan => write!(f, "<"),
-            GreaterThan => write!(f, ">"),
-            LessEquals => write!(f, "<="),
-            GreaterEquals => write!(f, ">="),
-            IsEqual => write!(f, "=="),
-            IsNotEqual => write!(f, "!="),
-            LogicalAnd => write!(f, "&&"),
-            LogicalOr => write!(f, "||"),
-            LogicalNot => write!(f, "!"),
-
-            Equals => write!(f, "="),
-            Dot => write!(f, "."),
-            DoubleDot => write!(f, ".."),
-            Comma => write!(f, ","),
-            Colon => write!(f, ":"),
-            Semicolon => write!(f, ";"),
-
-            OpenParen => write!(f, "("),
-            CloseParen => write!(f, ")"),
-            OpenCurly => write!(f, "{{"),
-            CloseCurly => write!(f, "}}"),
-            OpenBracket => write!(f, "["),
-            CloseBracket => write!(f, "]"),
-
-            RightArrow => write!(f, "->"),
-            Ref => write!(f, "*."),
-            Deref => write!(f, ".*"),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct Location<'a> {
-    pub input_path: &'a path::Path,
-
-    pub l0: usize,
-    pub c0: usize,
-
-    pub l1: usize,
-    pub c1: usize,
-}
-
 #[derive(Debug)]
 pub struct Lexer<'a> {
     // Read-only data
-    input: &'a str,
-    input_path: &'a path::Path,
+    pub input: &'a str,
+    pub input_path: &'a path::Path,
 
     // Lexing state
     input_iter: str::Chars<'a>,
@@ -218,7 +17,7 @@ pub struct Lexer<'a> {
     current_line_index: usize,
     current_line_begin_offset: usize,
 
-    tokens_buffer: Vec<Token<'a>>,
+    tokens_buffer: Vec<token::Token<'a>>,
     current_token_offset: usize,
 }
 
@@ -233,13 +32,12 @@ impl<'a> Lexer<'a> {
             current_line_index: 0,
             current_line_begin_offset: 0,
 
-            // The initial capacity is just a heuristic and is prone to change.
             tokens_buffer: Vec::with_capacity(128),
             current_token_offset: 0,
         }
     }
 
-    pub fn next_token(&mut self) -> Token<'a> {
+    pub fn next_token(&mut self) -> token::Token<'a> {
         if self.current_token_offset >= self.tokens_buffer.len() {
             self.advance_token();
         }
@@ -248,32 +46,39 @@ impl<'a> Lexer<'a> {
         result
     }
 
-    pub fn peek_token(&mut self, lookahead_index: usize) -> Token<'a> {
+    pub fn peek_token(&mut self, lookahead_index: usize) -> token::Token<'a> {
         while self.current_token_offset + lookahead_index >= self.tokens_buffer.len() {
             self.advance_token();
         }
         self.tokens_buffer[self.current_token_offset + lookahead_index].clone()
     }
 
-    pub fn peek_next_token(&mut self) -> Token<'a> {
+    pub fn peek_next_token(&mut self) -> token::Token<'a> {
         self.peek_token(0)
     }
 
-    pub fn last_token(&self) -> Token<'a> {
+    pub fn last_token(&self) -> token::Token<'a> {
         self.tokens_buffer[self.current_token_offset - 1].clone()
     }
 
-    pub fn report_error_at(&self, loc: Location, msg: &str) {
-        if loc.l0 == loc.l1 {
-            assert!(
-                loc.c0 <= loc.c1,
-                "Invalid location found while reporting error, check call site."
-            );
-        }
+    pub fn report_error_at(&self, loc: token::Location, msg: &str) {
         assert!(
-            loc.l0 <= loc.l1,
+            (if loc.l0 == loc.l1 {
+                loc.c0 <= loc.c1
+            } else {
+                true
+            }) && (loc.l0 <= loc.l1),
             "Invalid location found while reporting error, check call site."
         );
+
+        let is_tty = io::stdout().is_terminal(); // To ensure ansi escape codes are supported.
+        let (ansi_code_cyan, ansi_code_red, ansi_code_reset) = if is_tty {
+            ("\x1b[36m", "\x1b[31m", "\x1b[0m")
+        } else {
+            ("", "", "")
+        };
+
+        let padding = format!("{}", loc.l1 + 2).len();
 
         eprintln!(
             "{}:{}:{}: error: {}",
@@ -283,18 +88,8 @@ impl<'a> Lexer<'a> {
             msg
         );
 
-        eprintln!();
-        let is_tty = io::stdout().is_terminal(); // To ensure ansi escape codes are supported.
-
-        let (ansi_code_cyan, ansi_code_red, ansi_code_reset) = if is_tty {
-            ("\x1b[36m", "\x1b[31m", "\x1b[0m")
-        } else {
-            ("", "", "")
-        };
-
-        let padding = format!("{}", loc.l1 + 2).len();
-
         // Previous line
+        eprintln!();
         if loc.l0 > 0
             && let Some(previous_line) = &self.input.lines().nth(loc.l0 - 1)
         {
@@ -309,8 +104,8 @@ impl<'a> Lexer<'a> {
         }
 
         // Actually relevant line(s)
-
-        // @Note: It's okay to panic if any of the unwraps fail here.
+        //
+        // It's okay to panic if any of the unwraps fail here.
         // That would mean there is a bug somewhere else.
         if loc.l0 == loc.l1 {
             let current_line = &self.input.lines().nth(loc.l0).unwrap();
@@ -419,6 +214,7 @@ impl<'a> Lexer<'a> {
         let l0 = self.current_line_index;
         let c0 = self.current_character_index - self.current_line_begin_offset;
 
+        let mut token_val = VK::None;
         let token_kind = match self.peek_next_character() {
             Some(c) if c.is_alphabetic() || c == '_' => {
                 let mut ident_or_keyword = String::from(self.next_character().unwrap());
@@ -431,50 +227,53 @@ impl<'a> Lexer<'a> {
 
                 match &ident_or_keyword[..] {
                     // Booleans
-                    "true" => TokenKind::BoolLit(true),
-                    "false" => TokenKind::BoolLit(false),
+                    "true" => {
+                        token_val = VK::Bool(true);
+                        TK::Bool
+                    }
+                    "false" => {
+                        token_val = VK::Bool(false);
+                        TK::Bool
+                    }
 
                     // Floats
-                    "inf" => TokenKind::FloatLit(f64::INFINITY),
-                    "nan" => TokenKind::FloatLit(f64::NAN),
+                    "inf" => {
+                        token_val = VK::Float(f64::INFINITY);
+                        TK::Float
+                    }
+                    "nan" => {
+                        token_val = VK::Float(f64::NAN);
+                        TK::Float
+                    }
 
                     // Keywords
-                    "fn" => TokenKind::Fn,
-                    "return" => TokenKind::Return,
-                    "for" => TokenKind::For,
-                    "break" => TokenKind::Break,
-                    "continue" => TokenKind::Continue,
-                    "if" => TokenKind::If,
-                    "else" => TokenKind::Else,
+                    "fn" => TK::Fn,
+                    "return" => TK::Return,
+                    "for" => TK::For,
+                    "break" => TK::Break,
+                    "continue" => TK::Continue,
+                    "if" => TK::If,
+                    "else" => TK::Else,
 
-                    // Types
-                    "u0" | "void" => TokenKind::U0,
-                    "u8" | "char" => TokenKind::U8,
-                    "u16" => TokenKind::U16,
-                    "u32" => TokenKind::U32,
-                    "u64" => TokenKind::U64,
-                    "u128" => TokenKind::U128,
-                    "i0" | "bool" => TokenKind::I0,
-                    "i8" => TokenKind::I8,
-                    "i16" => TokenKind::I16,
-                    "i32" | "int" => TokenKind::I32,
-                    "i64" => TokenKind::I64,
-                    "i128" => TokenKind::I128,
-                    "f32" | "float" => TokenKind::F32,
-                    "f64" => TokenKind::F64,
-
-                    _ => TokenKind::Ident(ident_or_keyword),
+                    _ => {
+                        token_val = VK::Ident(ident_or_keyword);
+                        TK::Ident
+                    }
                 }
             }
-            Some(c) if c.is_ascii_digit() => self.lex_numeric_literal(),
+            Some(c) if c.is_ascii_digit() => {
+                let (k, v) = self.lex_numeric_literal();
+                token_val = v;
+                k
+            }
             Some('+') => {
                 self.next_character();
                 match self.peek_next_character() {
                     Some('=') => {
                         self.next_character();
-                        TokenKind::AddEquals
+                        TK::PlusEquals
                     }
-                    _ => TokenKind::Plus,
+                    _ => TK::Plus,
                 }
             }
             Some('-') => {
@@ -482,13 +281,13 @@ impl<'a> Lexer<'a> {
                 match self.peek_next_character() {
                     Some('=') => {
                         self.next_character();
-                        TokenKind::SubEquals
+                        TK::MinusEquals
                     }
                     Some('>') => {
                         self.next_character();
-                        TokenKind::RightArrow
+                        TK::RightArrow
                     }
-                    _ => TokenKind::Minus,
+                    _ => TK::Minus,
                 }
             }
             Some('*') => {
@@ -496,7 +295,7 @@ impl<'a> Lexer<'a> {
                 match self.peek_next_character() {
                     Some('=') => {
                         self.next_character();
-                        TokenKind::TimesEquals
+                        TK::TimesEquals
                     }
                     Some('.') => {
                         if let Some(c) = self.peek_character(1)
@@ -512,13 +311,13 @@ impl<'a> Lexer<'a> {
                             // binary multiplication of two floats. So, we leave the `.` untouched to
                             // be lexed as part of the float literal the next time around.
                             //
-                            TokenKind::Star
+                            TK::Star
                         } else {
                             self.next_character();
-                            TokenKind::Ref
+                            TK::Ref
                         }
                     }
-                    _ => TokenKind::Star,
+                    _ => TK::Star,
                 }
             }
             Some('/') => {
@@ -526,9 +325,9 @@ impl<'a> Lexer<'a> {
                 match self.peek_next_character() {
                     Some('=') => {
                         self.next_character();
-                        TokenKind::DivEquals
+                        TK::DivEquals
                     }
-                    _ => TokenKind::Div,
+                    _ => TK::Div,
                 }
             }
             Some('%') => {
@@ -536,9 +335,9 @@ impl<'a> Lexer<'a> {
                 match self.peek_next_character() {
                     Some('=') => {
                         self.next_character();
-                        TokenKind::ModEquals
+                        TK::ModEquals
                     }
-                    _ => TokenKind::Mod,
+                    _ => TK::Mod,
                 }
             }
             Some('&') => {
@@ -546,13 +345,13 @@ impl<'a> Lexer<'a> {
                 match self.peek_next_character() {
                     Some('=') => {
                         self.next_character();
-                        TokenKind::BitwiseAndEquals
+                        TK::BitwiseAndEquals
                     }
                     Some('&') => {
                         self.next_character();
-                        TokenKind::LogicalAnd
+                        TK::LogicalAnd
                     }
-                    _ => TokenKind::BitwiseAnd,
+                    _ => TK::BitwiseAnd,
                 }
             }
             Some('|') => {
@@ -560,13 +359,13 @@ impl<'a> Lexer<'a> {
                 match self.peek_next_character() {
                     Some('=') => {
                         self.next_character();
-                        TokenKind::BitwiseOrEquals
+                        TK::BitwiseOrEquals
                     }
                     Some('|') => {
                         self.next_character();
-                        TokenKind::LogicalOr
+                        TK::LogicalOr
                     }
-                    _ => TokenKind::BitwiseOr,
+                    _ => TK::BitwiseOr,
                 }
             }
             Some('~') => {
@@ -574,9 +373,9 @@ impl<'a> Lexer<'a> {
                 match self.peek_next_character() {
                     Some('=') => {
                         self.next_character();
-                        TokenKind::BitwiseNotEquals
+                        TK::BitwiseNotEquals
                     }
-                    _ => TokenKind::BitwiseNot,
+                    _ => TK::BitwiseNot,
                 }
             }
             Some('^') => {
@@ -584,9 +383,9 @@ impl<'a> Lexer<'a> {
                 match self.peek_next_character() {
                     Some('=') => {
                         self.next_character();
-                        TokenKind::BitwiseXorEquals
+                        TK::BitwiseXorEquals
                     }
-                    _ => TokenKind::BitwiseXor,
+                    _ => TK::BitwiseXor,
                 }
             }
             Some('<') => {
@@ -594,19 +393,19 @@ impl<'a> Lexer<'a> {
                 match self.peek_next_character() {
                     Some('=') => {
                         self.next_character();
-                        TokenKind::LessEquals
+                        TK::LessOrEqual
                     }
                     Some('<') => {
                         self.next_character();
                         match self.peek_next_character() {
                             Some('=') => {
                                 self.next_character();
-                                TokenKind::BitwiseShlEquals
+                                TK::BitwiseShlEquals
                             }
-                            _ => TokenKind::BitwiseShl,
+                            _ => TK::BitwiseShl,
                         }
                     }
-                    _ => TokenKind::LessThan,
+                    _ => TK::LessThan,
                 }
             }
             Some('>') => {
@@ -614,19 +413,19 @@ impl<'a> Lexer<'a> {
                 match self.peek_next_character() {
                     Some('=') => {
                         self.next_character();
-                        TokenKind::GreaterEquals
+                        TK::GreaterOrEqual
                     }
                     Some('>') => {
                         self.next_character();
                         match self.peek_next_character() {
                             Some('=') => {
                                 self.next_character();
-                                TokenKind::BitwiseShrEquals
+                                TK::BitwiseShrEquals
                             }
-                            _ => TokenKind::BitwiseShr,
+                            _ => TK::BitwiseShr,
                         }
                     }
-                    _ => TokenKind::GreaterThan,
+                    _ => TK::GreaterThan,
                 }
             }
             Some('=') => {
@@ -634,9 +433,9 @@ impl<'a> Lexer<'a> {
                 match self.peek_next_character() {
                     Some('=') => {
                         self.next_character();
-                        TokenKind::IsEqual
+                        TK::IsEqual
                     }
-                    _ => TokenKind::Equals,
+                    _ => TK::Equals,
                 }
             }
             Some('!') => {
@@ -644,81 +443,90 @@ impl<'a> Lexer<'a> {
                 match self.peek_next_character() {
                     Some('=') => {
                         self.next_character();
-                        TokenKind::IsNotEqual
+                        TK::IsNotEqual
                     }
-                    _ => TokenKind::LogicalNot,
+                    _ => TK::LogicalNot,
                 }
             }
             Some('.') => match self.peek_character(1) {
                 Some('.') => {
                     self.next_character();
                     self.next_character();
-                    TokenKind::DoubleDot
+                    TK::DoubleDot
                 }
                 Some('*') => {
                     self.next_character();
                     self.next_character();
-                    TokenKind::Deref
+                    TK::Deref
                 }
-                Some(c) if c.is_numeric() => self.lex_numeric_literal(),
+                Some(c) if c.is_numeric() => {
+                    let (k, v) = self.lex_numeric_literal();
+                    token_val = v;
+                    k
+                }
                 _ => {
                     self.next_character();
-                    TokenKind::Dot
+                    TK::Dot
                 }
             },
             Some(',') => {
                 self.next_character();
-                TokenKind::Comma
+                TK::Comma
             }
             Some(':') => {
                 self.next_character();
-                TokenKind::Colon
+                TK::Colon
             }
             Some(';') => {
                 self.next_character();
-                TokenKind::Semicolon
+                TK::Semicolon
             }
             Some('(') => {
                 self.next_character();
-                TokenKind::OpenParen
+                TK::OpenParen
             }
             Some(')') => {
                 self.next_character();
-                TokenKind::CloseParen
+                TK::CloseParen
             }
             Some('{') => {
                 self.next_character();
-                TokenKind::OpenCurly
+                TK::OpenCurly
             }
             Some('}') => {
                 self.next_character();
-                TokenKind::CloseCurly
+                TK::CloseCurly
             }
             Some('[') => {
                 self.next_character();
-                TokenKind::OpenBracket
+                TK::OpenBracket
             }
             Some(']') => {
                 self.next_character();
-                TokenKind::CloseBracket
+                TK::CloseBracket
             }
             Some('\'') => {
                 self.next_character();
-                self.lex_character_literal()
+                let (k, v) = self.lex_character_literal();
+                token_val = v;
+                k
             }
             Some('"') => {
                 self.next_character();
-                self.lex_string_literal()
+                let (k, v) = self.lex_string_literal();
+                token_val = v;
+                k
             }
-            None => TokenKind::Eof,
-            _ => TokenKind::LexError {
-                msg: "Illegal token detected.".to_string(),
-            },
+            None => TK::Eof,
+            _ => {
+                token_val = VK::LexError("Illegal token detected.".to_string());
+                TK::Invalid
+            }
         };
 
         let l1 = self.current_line_index;
 
-        // @Cleanup: Do something better!
+        // Do something better!
         let c1 = if self.current_character_index > self.current_line_begin_offset {
             self.current_character_index - self.current_line_begin_offset - 1
         } else {
@@ -731,9 +539,10 @@ impl<'a> Lexer<'a> {
         }
         assert!(l0 <= l1);
 
-        self.tokens_buffer.push(Token {
+        self.tokens_buffer.push(token::Token {
             kind: token_kind,
-            loc: Location {
+            val: token_val,
+            loc: token::Location {
                 input_path: self.input_path,
                 l0,
                 c0,
@@ -744,7 +553,7 @@ impl<'a> Lexer<'a> {
         });
     }
 
-    fn lex_numeric_literal(&mut self) -> TokenKind {
+    fn lex_numeric_literal(&mut self) -> (TK, VK) {
         let mut result = String::new();
 
         let mut base = 10;
@@ -801,7 +610,7 @@ impl<'a> Lexer<'a> {
                     && c != '-'
                     && c != '+'
                 {
-                    return TokenKind::LexError{msg:"Must have at least one optionally signed digit as exponent (e.g., '1.32e5', '0.9e-5', '4.5e+5').".to_string()};
+                    return (TK::Invalid, VK::LexError("Must have at least one optionally signed digit as exponent (e.g., '1.32e5', '0.9e-5', '4.5e+5').".to_string()));
                 }
                 exp = true;
             }
@@ -813,7 +622,7 @@ impl<'a> Lexer<'a> {
                 if let Some(c) = self.peek_next_character()
                     && !c.is_ascii_digit()
                 {
-                    return TokenKind::LexError{msg:"Must have at least one digit as exponent after sign (e.g., '0.9e-5', '4.5e+5').".to_string()};
+                    return (TK::Invalid, VK::LexError("Must have at least one digit as exponent after sign (e.g., '0.9e-5', '4.5e+5').".to_string()));
                 }
                 exp_sign = true;
             }
@@ -823,37 +632,45 @@ impl<'a> Lexer<'a> {
 
         if float {
             if base != 10 {
-                return TokenKind::LexError {
-                    msg: "Only base-10 float literals are supported.".to_string(),
-                };
+                return (
+                    TK::Invalid,
+                    VK::LexError("Only base-10 float literals are supported.".to_string()),
+                );
             }
             match result.parse::<f64>() {
-                Ok(v) => TokenKind::FloatLit(v),
-                Err(e) => TokenKind::LexError {
-                    msg: format!("Error while parsing float literal: `{}`: {}", &result, e)
-                        .to_string(),
-                },
+                Ok(v) => (TK::Float, VK::Float(v)),
+                Err(e) => (
+                    TK::Invalid,
+                    VK::LexError(format!(
+                        "Error while parsing float literal: `{}`: {}",
+                        &result, e
+                    )),
+                ),
             }
         } else {
             match u128::from_str_radix(&result, base) {
-                Ok(v) => TokenKind::IntLit(v),
-                Err(e) => TokenKind::LexError {
-                    msg: format!("Error while parsing integer literal: `{}`: {}", &result, e)
-                        .to_string(),
-                },
+                Ok(v) => (TK::Int, VK::Int(v)),
+                Err(e) => (
+                    TK::Invalid,
+                    VK::LexError(
+                        format!("Error while parsing integer literal: `{}`: {}", &result, e)
+                            .to_string(),
+                    ),
+                ),
             }
         }
     }
 
-    fn lex_string_literal(&mut self) -> TokenKind {
+    fn lex_string_literal(&mut self) -> (TK, VK) {
         let mut result = String::new();
 
         loop {
             match self.next_character() {
                 None => {
-                    return TokenKind::LexError {
-                        msg: "Unclosed string literal (unexpected EOF).".to_string(),
-                    };
+                    return (
+                        TK::Invalid,
+                        VK::LexError("Unclosed string literal (unexpected EOF).".to_string()),
+                    );
                 }
                 Some('"') => break,
                 Some('\\') => match self.next_character() {
@@ -865,51 +682,63 @@ impl<'a> Lexer<'a> {
                     Some('x') => match self.make_possible_character_from_hex_digits(2) {
                         Ok(c) => result.push(c),
                         Err(()) => {
-                            return TokenKind::LexError {
-                                msg: "Must have exactly 2 hex digits after '\\x'.".to_string(),
-                            };
+                            return (
+                                TK::Invalid,
+                                VK::LexError(
+                                    "Must have exactly 2 hex digits after '\\x'.".to_string(),
+                                ),
+                            );
                         }
                     },
                     Some('u') => match self.make_possible_character_from_hex_digits(4) {
                         Ok(c) => result.push(c),
                         Err(()) => {
-                            return TokenKind::LexError {
-                                msg: "Must have exactly 4 hex digits after '\\u'.".to_string(),
-                            };
+                            return (
+                                TK::Invalid,
+                                VK::LexError(
+                                    "Must have exactly 4 hex digits after '\\u'.".to_string(),
+                                ),
+                            );
                         }
                     },
                     Some('U') => match self.make_possible_character_from_hex_digits(8) {
                         Ok(c) => result.push(c),
                         Err(()) => {
-                            return TokenKind::LexError {
-                                msg: "Must have exactly 8 hex digits after '\\U'.".to_string(),
-                            };
+                            return (
+                                TK::Invalid,
+                                VK::LexError(
+                                    "Must have exactly 8 hex digits after '\\U'.".to_string(),
+                                ),
+                            );
                         }
                     },
                     Some(c) => {
-                        return TokenKind::LexError {
-                            msg: format!("Invalid escape code in string literal: `{}`", c),
-                        };
+                        return (
+                            TK::Invalid,
+                            VK::LexError(format!("Invalid escape code in string literal: `{}`", c)),
+                        );
                     }
                     None => {
-                        return TokenKind::LexError {
-                            msg: "Unclosed string literal (unexpected EOF).".to_string(),
-                        };
+                        return (
+                            TK::Invalid,
+                            VK::LexError("Unclosed string literal (unexpected EOF).".to_string()),
+                        );
                     }
                 },
                 Some(c) => result.push(c),
             }
         }
 
-        TokenKind::StrLit(result)
+        (TK::Str, VK::Str(result))
     }
 
-    fn lex_character_literal(&mut self) -> TokenKind {
+    fn lex_character_literal(&mut self) -> (TK, VK) {
         let result: u8 = match self.next_character() {
             None | Some('\'') => {
-                return TokenKind::LexError {
-                    msg: "Empty character literal.".to_string(),
-                };
+                return (
+                    TK::Invalid,
+                    VK::LexError("Empty character literal.".to_string()),
+                );
             }
             Some('\\') => match self.next_character() {
                 Some('n') => b'\n',
@@ -920,33 +749,38 @@ impl<'a> Lexer<'a> {
                 Some('x') => match self.make_possible_character_from_hex_digits(2) {
                     Ok(c) => c as u8,
                     Err(()) => {
-                        return TokenKind::LexError {
-                            msg: "Must have exactly 2 hex digits after '\\x'.".to_string(),
-                        };
+                        return (
+                            TK::Invalid,
+                            VK::LexError("Must have exactly 2 hex digits after '\\x'.".to_string()),
+                        );
                     }
                 },
                 Some(c) => {
-                    return TokenKind::LexError {
-                        msg: format!("Invalid escape code in character literal: `{}`", c),
-                    };
+                    return (
+                        TK::Invalid,
+                        VK::LexError(format!("Invalid escape code in character literal: `{}`", c)),
+                    );
                 }
                 None => {
-                    return TokenKind::LexError {
-                        msg: "Unexpected EOF in character literal.".to_string(),
-                    };
+                    return (
+                        TK::Invalid,
+                        VK::LexError("Unexpected EOF in character literal.".to_string()),
+                    );
                 }
             },
             Some(c) => c as u8,
         };
 
         match self.next_character() {
-            Some('\'') => TokenKind::CharLit(result),
-            None => TokenKind::LexError {
-                msg: "Unclosed character literal (unexpected EOF).".to_string(),
-            },
-            Some(_) => TokenKind::LexError {
-                msg: "Character literal contains more than one character.".to_string(),
-            },
+            Some('\'') => (TK::Char, VK::Char(result)),
+            None => (
+                TK::Invalid,
+                VK::LexError("Unclosed character literal (unexpected EOF).".to_string()),
+            ),
+            Some(_) => (
+                TK::Invalid,
+                VK::LexError("Character literal contains more than one character.".to_string()),
+            ),
         }
     }
 
@@ -995,7 +829,7 @@ impl<'a> Lexer<'a> {
     fn eat_comments(&mut self) {
         loop {
             if self.input_iter.as_str().starts_with("//") {
-                // eat the leading `//`
+                // Eat the leading `//`.
                 self.next_character();
                 self.next_character();
 
@@ -1005,7 +839,7 @@ impl<'a> Lexer<'a> {
                     self.next_character();
                 }
             } else if self.input_iter.as_str().starts_with("/*") {
-                // eat the leading `/*`
+                // Eat the leading `/*`.
                 self.next_character();
                 self.next_character();
 

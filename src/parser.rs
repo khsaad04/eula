@@ -1,164 +1,9 @@
-use crate::lexer::{self, TokenKind as TK};
+use crate::{
+    ast, lexer,
+    token::{TokenKind as TK, ValueKind as VK},
+};
 
 use std::{collections::HashMap, path, process};
-
-#[derive(Debug)]
-pub struct AstTopLevel {
-    pub decls: HashMap<String, AstDecl>,
-}
-
-#[derive(Debug)]
-pub enum AstDecl {
-    Fn(AstFnDecl),
-    Var(AstVarDecl),
-}
-
-#[derive(Debug)]
-pub struct AstFnDecl {
-    pub name: String,
-    pub params: Vec<AstParam>,
-    pub return_type: AstTypeExpr,
-    pub body: Option<AstBlock>, // `None` means it does not have a definition.
-}
-
-#[derive(Debug)]
-pub struct AstVarDecl {
-    pub name: String,
-    pub ty: AstTypeExpr,
-    pub value: Option<AstExpr>,
-}
-
-// @Note: Params may differ in the future.
-pub type AstParam = AstVarDecl;
-
-#[derive(Debug)]
-pub enum AstExpr {
-    Str(String),
-    Char(u8),
-    Int(u128),
-    Float(f64),
-    Bool(bool),
-    Type(AstTypeExpr),
-    Var {
-        name: String,
-        ty: AstTypeExpr,
-    },
-    FnCall {
-        id: String,
-        args: Vec<AstExpr>,
-    },
-    UnaryOp {
-        op: UnaryOpKind,
-        operand: Box<AstExpr>,
-    },
-    BinaryOp {
-        op: BinaryOpKind,
-        lhs: Box<AstExpr>,
-        rhs: Box<AstExpr>,
-    },
-}
-
-#[derive(Debug)]
-pub enum AstTypeExpr {
-    U0, // alias: void
-    U8, // alias: char
-    U16,
-    U32,
-    U64,
-    U128,
-    I0, // alias: bool
-    I8,
-    I16,
-    I32, // alias: int
-    I64,
-    I128,
-    F32, // alias: float
-    F64,
-    Array(Box<AstTypeExpr>),
-    Ref(Box<AstTypeExpr>),
-    Unknown, // This should get resolved at the typing phase.
-}
-
-#[derive(Debug)]
-pub enum AstStmt {
-    Block(AstBlock),
-    Decl(AstDecl),
-    Assign {
-        op: AssignOpKind,
-        lvalue: AstExpr,
-        rvalue: AstExpr,
-    },
-    If {
-        cond: AstExpr,
-        then_block: AstBlock,
-        else_block: Option<AstBlock>,
-    },
-    For {
-        init: Box<Option<AstStmt>>,
-        cond: AstExpr,
-        incr: Box<Option<AstStmt>>,
-
-        body: AstBlock,
-    },
-    Return(AstExpr),
-    Expr(AstExpr),
-}
-
-pub type AstBlock = Vec<AstStmt>;
-
-#[derive(Debug)]
-pub enum AssignOpKind {
-    Default, // =
-
-    Add, // +=
-    Sub, // -=
-    Mul, // *=
-    Div, // /=
-    Mod, // %=
-
-    BitwiseAnd, // &=
-    BitwiseOr,  // |=
-    BitwiseNot, // ~=
-    BitwiseXor, // ^=
-    BitwiseShl, // <<=
-    BitwiseShr, // >>=
-}
-
-#[derive(Debug)]
-pub enum BinaryOpKind {
-    Add, // +
-    Sub, // -
-    Mul, // *
-    Div, // /
-    Mod, // %
-
-    BitwiseAnd, // &
-    BitwiseOr,  // |
-    BitwiseXor, // ^
-    BitwiseShl, // <<
-    BitwiseShr, // >>
-
-    LessThan,      // <
-    GreaterThan,   // >
-    LessEquals,    // <=
-    GreaterEquals, // >=
-    IsEqual,       // ==
-    IsNotEqual,    // !=
-    LogicalAnd,    // &&
-    LogicalOr,     // ||
-
-    Pipe, // |>
-}
-
-#[derive(Debug)]
-pub enum UnaryOpKind {
-    Plus,       // +
-    Minus,      // -
-    BitwiseNot, // ~
-    LogicalNot, // !
-    Ref,        // *.
-    Deref,      // .*
-}
 
 #[derive(Debug)]
 pub struct Parser<'a> {
@@ -172,15 +17,18 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn parse_top_level(&mut self) -> AstTopLevel {
-        let mut top_level = AstTopLevel {
+    pub fn parse_top_level(&mut self) -> ast::TopLevel {
+        let mut top_level = ast::TopLevel {
             decls: HashMap::new(),
         };
 
         loop {
             let tok = self.lexer.peek_next_token();
             match tok.kind {
-                TK::Ident(id) => {
+                TK::Ident => {
+                    let VK::Ident(id) = tok.val else {
+                        unreachable!()
+                    };
                     if top_level
                         .decls
                         .insert(id.clone(), self.parse_decl())
@@ -206,8 +54,8 @@ impl<'a> Parser<'a> {
         top_level
     }
 
-    fn parse_decl(&mut self) -> AstDecl {
-        let TK::Ident(name) = self.lexer.next_token().kind else {
+    fn parse_decl(&mut self) -> ast::Decl {
+        let VK::Ident(name) = self.lexer.next_token().val else {
             unreachable!()
         };
 
@@ -216,13 +64,13 @@ impl<'a> Parser<'a> {
         let ty = match self.lexer.peek_next_token().kind {
             TK::Colon | TK::Equals => {
                 self.eat_token();
-                AstTypeExpr::Unknown
+                ast::TypeExpr::Unknown
             }
             _ => self.parse_type_expr(),
         };
 
         if self.lexer.peek_next_token().kind == TK::Semicolon {
-            return AstDecl::Var(AstVarDecl {
+            return ast::Decl::Var(ast::VarDecl {
                 name,
                 ty,
                 value: None,
@@ -234,12 +82,12 @@ impl<'a> Parser<'a> {
             TK::Fn => {
                 self.eat_token();
 
-                let mut params: Vec<AstParam> = vec![];
+                let mut params: Vec<ast::Param> = vec![];
                 if self.lexer.peek_next_token().kind == TK::OpenParen {
                     self.eat_token();
                     loop {
                         match self.lexer.peek_next_token().kind {
-                            TK::Ident(_) => {
+                            TK::Ident => {
                                 params.push(self.parse_fn_param());
                             }
                             TK::Comma => {
@@ -268,7 +116,7 @@ impl<'a> Parser<'a> {
                     self.eat_token();
                     self.parse_type_expr()
                 } else {
-                    AstTypeExpr::U0
+                    ast::TypeExpr::U0
                 };
 
                 let tok = self.lexer.peek_next_token();
@@ -282,14 +130,14 @@ impl<'a> Parser<'a> {
                     process::exit(1);
                 };
 
-                AstDecl::Fn(AstFnDecl {
+                ast::Decl::Fn(ast::FnDecl {
                     name,
                     params,
                     return_type,
                     body,
                 })
             }
-            _ => AstDecl::Var(AstVarDecl {
+            _ => ast::Decl::Var(ast::VarDecl {
                 name,
                 ty,
                 value: Some(self.parse_expr()),
@@ -297,8 +145,8 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_fn_param(&mut self) -> AstParam {
-        let TK::Ident(name) = self.lexer.next_token().kind else {
+    fn parse_fn_param(&mut self) -> ast::Param {
+        let VK::Ident(name) = self.lexer.next_token().val else {
             unreachable!()
         };
 
@@ -307,7 +155,7 @@ impl<'a> Parser<'a> {
         let ty = match self.lexer.peek_next_token().kind {
             TK::Colon | TK::Equals => {
                 self.lexer.next_token();
-                AstTypeExpr::Unknown
+                ast::TypeExpr::Unknown
             }
             _ => self.parse_type_expr(),
         };
@@ -317,56 +165,58 @@ impl<'a> Parser<'a> {
             _ => Some(self.parse_expr()),
         };
 
-        AstParam { name, ty, value }
+        ast::Param { name, ty, value }
     }
 
-    fn parse_block(&mut self) -> AstBlock {
-        self.expect_token(lexer::TokenKind::OpenCurly);
-        let mut block: AstBlock = vec![];
+    fn parse_block(&mut self) -> ast::Block {
+        self.expect_token(TK::OpenCurly);
+        let mut block: ast::Block = vec![];
 
-        while self.lexer.peek_next_token().kind != lexer::TokenKind::CloseCurly {
+        while self.lexer.peek_next_token().kind != TK::CloseCurly {
             block.push(self.parse_statement());
-            if self.lexer.last_token().kind != lexer::TokenKind::CloseCurly {
-                self.expect_token(lexer::TokenKind::Semicolon);
+            if self.lexer.last_token().kind != TK::CloseCurly {
+                self.expect_token(TK::Semicolon);
             }
         }
-        self.expect_token(lexer::TokenKind::CloseCurly);
+        self.expect_token(TK::CloseCurly);
         block
     }
 
-    fn parse_statement(&mut self) -> AstStmt {
+    fn parse_statement(&mut self) -> ast::Stmt {
         let tok = self.lexer.peek_next_token();
 
         match tok.kind {
-            TK::Ident(_) if self.lexer.peek_token(1).kind == TK::Colon => {
-                AstStmt::Decl(self.parse_decl())
+            TK::Ident if self.lexer.peek_token(1).kind == TK::Colon => {
+                ast::Stmt::Decl(self.parse_decl())
             }
-            TK::OpenCurly => AstStmt::Block(self.parse_block()),
+            TK::OpenCurly => ast::Stmt::Block(self.parse_block()),
             TK::For => {
                 self.eat_token();
 
-                let init_statement = if self.lexer.peek_next_token().kind == TK::Semicolon {
-                    None
-                } else {
-                    Some(self.parse_statement())
-                };
-                self.expect_token(TK::Semicolon);
+                let mut init_stmt: Option<ast::Stmt> = None;
+                let mut cond_expr: Option<ast::Expr> = None;
+                let mut incr_expr: Option<ast::Expr> = None;
 
-                let cond_expr = self.parse_expr();
-                self.expect_token(TK::Semicolon);
+                if self.lexer.peek_next_token().kind != TK::OpenCurly {
+                    if self.lexer.peek_next_token().kind != TK::Semicolon {
+                        init_stmt = Some(self.parse_statement());
+                    }
+                    self.expect_token(TK::Semicolon);
 
-                let incr_statement = if self.lexer.peek_next_token().kind == TK::OpenCurly {
-                    None
-                } else {
-                    Some(self.parse_statement())
-                };
+                    cond_expr = Some(self.parse_expr());
+                    self.expect_token(TK::Semicolon);
+
+                    if self.lexer.peek_next_token().kind != TK::OpenCurly {
+                        incr_expr = Some(self.parse_expr());
+                    }
+                }
 
                 let if_block = self.parse_block();
 
-                AstStmt::For {
-                    init: Box::new(init_statement),
+                ast::Stmt::For {
+                    init: Box::new(init_stmt),
                     cond: cond_expr,
-                    incr: Box::new(incr_statement),
+                    incr: incr_expr,
                     body: if_block,
                 }
             }
@@ -375,7 +225,7 @@ impl<'a> Parser<'a> {
 
                 let cond = self.parse_expr();
 
-                let mut then_block: AstBlock = vec![];
+                let mut then_block: ast::Block = vec![];
                 if self.lexer.peek_next_token().kind == TK::OpenCurly {
                     then_block = self.parse_block();
                 } else {
@@ -389,7 +239,7 @@ impl<'a> Parser<'a> {
                     None
                 };
 
-                AstStmt::If {
+                ast::Stmt::If {
                     cond,
                     then_block,
                     else_block,
@@ -397,40 +247,14 @@ impl<'a> Parser<'a> {
             }
             TK::Return => {
                 self.eat_token();
-                AstStmt::Return(self.parse_expr())
+                ast::Stmt::Return(self.parse_expr())
             }
-            _ => {
-                let expr1 = self.parse_expr();
-                let op = match self.lexer.peek_next_token().kind {
-                    TK::Equals => AssignOpKind::Default,
-
-                    TK::AddEquals => AssignOpKind::Add,
-                    TK::SubEquals => AssignOpKind::Sub,
-                    TK::TimesEquals => AssignOpKind::Mul,
-                    TK::DivEquals => AssignOpKind::Div,
-                    TK::ModEquals => AssignOpKind::Mod,
-
-                    TK::BitwiseAndEquals => AssignOpKind::BitwiseAnd,
-                    TK::BitwiseOrEquals => AssignOpKind::BitwiseOr,
-                    TK::BitwiseXorEquals => AssignOpKind::BitwiseNot,
-                    TK::BitwiseNotEquals => AssignOpKind::BitwiseXor,
-                    TK::BitwiseShlEquals => AssignOpKind::BitwiseShl,
-                    TK::BitwiseShrEquals => AssignOpKind::BitwiseShr,
-                    _ => return AstStmt::Expr(expr1),
-                };
-                self.eat_token();
-                let expr2 = self.parse_expr();
-                AstStmt::Assign {
-                    op,
-                    lvalue: expr1,
-                    rvalue: expr2,
-                }
-            }
+            _ => ast::Stmt::Expr(self.parse_expr()),
         }
     }
 
-    fn parse_var_decl(&mut self) -> AstVarDecl {
-        let TK::Ident(name) = self.lexer.next_token().kind else {
+    fn parse_var_decl(&mut self) -> ast::VarDecl {
+        let VK::Ident(name) = self.lexer.next_token().val else {
             unreachable!()
         };
 
@@ -439,7 +263,7 @@ impl<'a> Parser<'a> {
         let ty = match self.lexer.peek_next_token().kind {
             TK::Colon | TK::Equals => {
                 self.lexer.next_token();
-                AstTypeExpr::Unknown
+                ast::TypeExpr::Unknown
             }
             _ => self.parse_type_expr(),
         };
@@ -449,43 +273,68 @@ impl<'a> Parser<'a> {
             _ => Some(self.parse_expr()),
         };
 
-        AstVarDecl { name, ty, value }
+        ast::VarDecl { name, ty, value }
     }
 
-    fn parse_expr(&mut self) -> AstExpr {
+    fn parse_expr(&mut self) -> ast::Expr {
         self.parse_expr_bp(0)
     }
 
-    fn parse_expr_bp(&mut self, bp: usize) -> AstExpr {
+    fn parse_expr_bp(&mut self, bp: usize) -> ast::Expr {
         let tok = self.lexer.peek_next_token();
 
         let mut lhs = match tok.kind {
-            TK::StrLit(s) => {
+            TK::Str => {
+                let VK::Str(s) = tok.val else { unreachable!() };
                 self.eat_token();
-                AstExpr::Str(s)
+                ast::Expr {
+                    kind: ast::ExprKind::Str(s),
+                    ty: ast::TypeExpr::String,
+                }
             }
-            TK::CharLit(c) => {
+            TK::Char => {
+                let VK::Char(c) = tok.val else { unreachable!() };
                 self.eat_token();
-                AstExpr::Char(c)
+                ast::Expr {
+                    kind: ast::ExprKind::Char(c),
+                    ty: ast::TypeExpr::U8,
+                }
             }
-            TK::IntLit(i) => {
+            TK::Int => {
+                let VK::Int(i) = tok.val else { unreachable!() };
                 self.eat_token();
-                AstExpr::Int(i)
+                ast::Expr {
+                    kind: ast::ExprKind::Int(i),
+                    ty: ast::TypeExpr::Unknown,
+                }
             }
-            TK::FloatLit(f) => {
+            TK::Float => {
+                let VK::Float(f) = tok.val else {
+                    unreachable!()
+                };
                 self.eat_token();
-                AstExpr::Float(f)
+                ast::Expr {
+                    kind: ast::ExprKind::Float(f),
+                    ty: ast::TypeExpr::Unknown,
+                }
             }
-            TK::BoolLit(b) => {
+            TK::Bool => {
+                let VK::Bool(b) = tok.val else { unreachable!() };
                 self.eat_token();
-                AstExpr::Bool(b)
+                ast::Expr {
+                    kind: ast::ExprKind::Bool(b),
+                    ty: ast::TypeExpr::I0,
+                }
             }
-            TK::Ident(_) if self.lexer.peek_token(1).kind == TK::OpenParen => self.parse_fn_call(),
-            TK::Ident(id) => {
+            TK::Ident if self.lexer.peek_token(1).kind == TK::OpenParen => self.parse_fn_call(),
+            TK::Ident => {
+                let VK::Ident(name) = tok.val else {
+                    unreachable!()
+                };
                 self.eat_token();
-                AstExpr::Var {
-                    name: id,
-                    ty: AstTypeExpr::Unknown,
+                ast::Expr {
+                    kind: ast::ExprKind::Var { name },
+                    ty: ast::TypeExpr::Unknown,
                 }
             }
             TK::OpenParen => {
@@ -494,39 +343,14 @@ impl<'a> Parser<'a> {
                 self.expect_token(TK::CloseParen);
                 expr
             }
-            TK::Plus => {
+            tk if let Some(op) = tk.to_prefix_unop() => {
                 self.eat_token();
-                AstExpr::UnaryOp {
-                    op: UnaryOpKind::Plus,
-                    operand: Box::new(self.parse_expr_bp(30)),
-                }
-            }
-            TK::Minus => {
-                self.eat_token();
-                AstExpr::UnaryOp {
-                    op: UnaryOpKind::Minus,
-                    operand: Box::new(self.parse_expr_bp(30)),
-                }
-            }
-            TK::BitwiseNot => {
-                self.eat_token();
-                AstExpr::UnaryOp {
-                    op: UnaryOpKind::BitwiseNot,
-                    operand: Box::new(self.parse_expr_bp(30)),
-                }
-            }
-            TK::LogicalNot => {
-                self.eat_token();
-                AstExpr::UnaryOp {
-                    op: UnaryOpKind::LogicalNot,
-                    operand: Box::new(self.parse_expr_bp(30)),
-                }
-            }
-            TK::Ref => {
-                self.eat_token();
-                AstExpr::UnaryOp {
-                    op: UnaryOpKind::Ref,
-                    operand: Box::new(self.parse_expr_bp(30)),
+                ast::Expr {
+                    kind: ast::ExprKind::UnaryOp {
+                        op,
+                        operand: Box::new(self.parse_expr_bp(30)),
+                    },
+                    ty: ast::TypeExpr::Unknown,
                 }
             }
             _ => {
@@ -539,24 +363,39 @@ impl<'a> Parser<'a> {
         loop {
             if self.lexer.peek_next_token().kind == TK::Deref {
                 self.eat_token();
-                lhs = AstExpr::UnaryOp {
-                    op: UnaryOpKind::Deref,
-                    operand: Box::new(lhs),
+                lhs = ast::Expr {
+                    kind: ast::ExprKind::UnaryOp {
+                        op: ast::UnaryOpKind::Deref,
+                        operand: Box::new(lhs),
+                    },
+                    ty: ast::TypeExpr::Unknown,
                 };
                 continue;
             }
 
             let (lbp, rbp) = match self.lexer.peek_next_token().kind {
-                TK::LogicalOr => (7, 8),
-                TK::LogicalAnd => (9, 10),
-                TK::IsEqual | TK::IsNotEqual => (11, 12),
-                TK::LessThan | TK::LessEquals | TK::GreaterThan | TK::GreaterEquals => (13, 14),
-                TK::BitwiseOr => (15, 16),
-                TK::BitwiseXor => (17, 18),
-                TK::BitwiseAnd => (19, 20),
-                TK::BitwiseShl | TK::BitwiseShr => (21, 22),
-                TK::Plus | TK::Minus => (23, 24),
-                TK::Star | TK::Div | TK::Mod => (25, 26),
+                TK::Equals
+                | TK::PlusEquals
+                | TK::MinusEquals
+                | TK::TimesEquals
+                | TK::DivEquals
+                | TK::ModEquals
+                | TK::BitwiseAndEquals
+                | TK::BitwiseOrEquals
+                | TK::BitwiseNotEquals
+                | TK::BitwiseXorEquals
+                | TK::BitwiseShlEquals
+                | TK::BitwiseShrEquals => (2, 1), // lbp > rbp means it's right associated.
+                TK::LogicalOr => (3, 4),
+                TK::LogicalAnd => (5, 6),
+                TK::IsEqual | TK::IsNotEqual => (7, 8),
+                TK::LessThan | TK::LessOrEqual | TK::GreaterThan | TK::GreaterOrEqual => (9, 10),
+                TK::BitwiseOr => (11, 12),
+                TK::BitwiseXor => (13, 14),
+                TK::BitwiseAnd => (15, 16),
+                TK::BitwiseShl | TK::BitwiseShr => (17, 18),
+                TK::Plus | TK::Minus => (19, 20),
+                TK::Star | TK::Div | TK::Mod => (21, 22),
                 _ => break,
             };
             if lbp < bp {
@@ -564,45 +403,39 @@ impl<'a> Parser<'a> {
             }
 
             let tok = self.lexer.next_token();
-            let op = match tok.kind {
-                TK::Plus => BinaryOpKind::Add,
-                TK::Minus => BinaryOpKind::Sub,
-                TK::Star => BinaryOpKind::Mul,
-                TK::Div => BinaryOpKind::Div,
-                TK::Mod => BinaryOpKind::Mod,
-                TK::BitwiseAnd => BinaryOpKind::BitwiseAnd,
-                TK::BitwiseOr => BinaryOpKind::BitwiseOr,
-                TK::BitwiseXor => BinaryOpKind::BitwiseXor,
-                TK::BitwiseShl => BinaryOpKind::BitwiseShl,
-                TK::BitwiseShr => BinaryOpKind::BitwiseShr,
-                TK::LessThan => BinaryOpKind::LessThan,
-                TK::GreaterThan => BinaryOpKind::GreaterThan,
-                TK::LessEquals => BinaryOpKind::LessEquals,
-                TK::GreaterEquals => BinaryOpKind::GreaterEquals,
-                TK::IsEqual => BinaryOpKind::IsEqual,
-                TK::IsNotEqual => BinaryOpKind::IsNotEqual,
-                TK::LogicalAnd => BinaryOpKind::LogicalAnd,
-                TK::LogicalOr => BinaryOpKind::LogicalOr,
-                _ => unreachable!(),
-            };
             let rhs = self.parse_expr_bp(rbp);
 
-            lhs = AstExpr::BinaryOp {
-                op,
-                lhs: Box::new(lhs),
-                rhs: Box::new(rhs),
+            if let Some(op) = tok.kind.to_assop() {
+                lhs = ast::Expr {
+                    kind: ast::ExprKind::AssignOp {
+                        op,
+                        lvalue: Box::new(lhs),
+                        rvalue: Box::new(rhs),
+                    },
+                    ty: ast::TypeExpr::Unknown,
+                };
+                break;
+            }
+
+            lhs = ast::Expr {
+                kind: ast::ExprKind::BinaryOp {
+                    op: tok.kind.to_binop().unwrap(),
+                    lhs: Box::new(lhs),
+                    rhs: Box::new(rhs),
+                },
+                ty: ast::TypeExpr::Unknown,
             };
         }
 
         lhs
     }
 
-    fn parse_fn_call(&mut self) -> AstExpr {
-        let TK::Ident(id) = self.lexer.next_token().kind else {
+    fn parse_fn_call(&mut self) -> ast::Expr {
+        let VK::Ident(name) = self.lexer.next_token().val else {
             unreachable!()
         };
 
-        let mut args: Vec<AstExpr> = vec![];
+        let mut args: Vec<ast::Expr> = vec![];
         self.expect_token(TK::OpenParen);
         loop {
             match self.lexer.peek_next_token().kind {
@@ -618,31 +451,42 @@ impl<'a> Parser<'a> {
             }
         }
 
-        AstExpr::FnCall { id, args }
+        ast::Expr {
+            kind: ast::ExprKind::FnCall { name, args },
+            ty: ast::TypeExpr::Unknown,
+        }
     }
 
-    fn parse_type_expr(&mut self) -> AstTypeExpr {
+    fn parse_type_expr(&mut self) -> ast::TypeExpr {
         let tok = self.lexer.next_token();
 
         match tok.kind {
-            TK::U0 => AstTypeExpr::U0,
-            TK::U8 => AstTypeExpr::U8,
-            TK::U16 => AstTypeExpr::U16,
-            TK::U32 => AstTypeExpr::U32,
-            TK::U64 => AstTypeExpr::U64,
-            TK::U128 => AstTypeExpr::U128,
-            TK::I0 => AstTypeExpr::I0,
-            TK::I8 => AstTypeExpr::I8,
-            TK::I16 => AstTypeExpr::I16,
-            TK::I32 => AstTypeExpr::I32,
-            TK::I64 => AstTypeExpr::I64,
-            TK::I128 => AstTypeExpr::I128,
-            TK::F32 => AstTypeExpr::F32,
-            TK::F64 => AstTypeExpr::F64,
-            TK::BitwiseAnd => AstTypeExpr::Ref(Box::new(self.parse_type_expr())),
+            TK::Ident => {
+                let VK::Ident(name) = tok.val else {
+                    unreachable!()
+                };
+                match name.as_str() {
+                    "u0" | "void" => ast::TypeExpr::U0,
+                    "u8" | "char" => ast::TypeExpr::U8,
+                    "u16" => ast::TypeExpr::U16,
+                    "u32" => ast::TypeExpr::U32,
+                    "u64" => ast::TypeExpr::U64,
+                    "u128" => ast::TypeExpr::U128,
+                    "i0" | "bool" => ast::TypeExpr::I0,
+                    "i8" => ast::TypeExpr::I8,
+                    "i16" => ast::TypeExpr::I16,
+                    "i32" | "int" => ast::TypeExpr::I32,
+                    "i64" => ast::TypeExpr::I64,
+                    "i128" => ast::TypeExpr::I128,
+                    "f32" => ast::TypeExpr::F32,
+                    "f64" => ast::TypeExpr::F64,
+                    _ => todo!(),
+                }
+            }
+            TK::BitwiseAnd => ast::TypeExpr::Ref(Box::new(self.parse_type_expr())),
             TK::OpenBracket => {
                 self.expect_token(TK::CloseBracket);
-                AstTypeExpr::Array(Box::new(self.parse_type_expr()))
+                ast::TypeExpr::Array(Box::new(self.parse_type_expr()))
             }
             _ => {
                 self.lexer
@@ -656,7 +500,7 @@ impl<'a> Parser<'a> {
         self.lexer.next_token();
     }
 
-    fn expect_token(&mut self, expected_token_kind: lexer::TokenKind) {
+    fn expect_token(&mut self, expected_token_kind: TK) {
         let next_token = self.lexer.next_token();
 
         if next_token.kind != expected_token_kind {

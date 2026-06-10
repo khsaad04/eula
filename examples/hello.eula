@@ -1,3 +1,4 @@
-main :: fn {
-    printf("Hello, world\n");
+main :: fn -> int {
+    printf("Hello, World\n");
+    return 0;
 }
