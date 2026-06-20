@@ -1,14 +1,18 @@
-main :: fn {
-    // Initialized to 0 by default.
+main :: fn -> int {
+    // Variables aren't 0-initialized (yet).
     a: int;
     b: int;
     c: int;
-    b = 1;
 
-    for ; a < 1_000_000 ; {
+    a = 0;
+    b = 1;
+    c = 0;
+
+    for i := 0; i < 30; i += 1 {
         printf("%d\n", a);
         c = a + b;
         a = b;
         b = c;
     }
+    return 0;
 }

@@ -4,7 +4,6 @@ mod ast;
 mod codegen;
 mod lexer;
 mod parser;
-mod token;
 
 use std::{env, fs, path, process};
 
@@ -31,9 +30,15 @@ impl Compiler {
                 );
 
                 let mut parser = parser::Parser::new(&input, input_path);
+                // while parser.lexer.peek_next_token().kind != lexer::TokenKind::Eof {
+                //     let tok = parser.lexer.next_token();
+                //     dbg!(tok.lexeme);
+                //     dbg!(tok.span);
+                // }
+                // process::exit(1);
                 let ast = parser.parse_top_level();
 
-                let mut code_generator = codegen::Codegen::new(ast);
+                let mut code_generator = codegen::Codegen::new(ast, parser.lexer);
                 code_generator.generate().unwrap();
                 code_generator
                     .write_entire_buffer_to_file(output_path.with_extension("c").to_str().unwrap())

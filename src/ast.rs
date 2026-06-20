@@ -1,4 +1,4 @@
-use crate::token::TokenKind as TK;
+use crate::lexer::{self, TokenKind as TK};
 
 use std::collections::HashMap;
 
@@ -8,7 +8,13 @@ pub struct TopLevel {
 }
 
 #[derive(Debug)]
-pub enum Decl {
+pub struct Decl {
+    pub kind: DeclKind,
+    pub span: lexer::Span,
+}
+
+#[derive(Debug)]
+pub enum DeclKind {
     Fn(FnDecl),
     Var(VarDecl),
 }
@@ -17,15 +23,17 @@ pub enum Decl {
 pub struct FnDecl {
     pub name: String,
     pub params: Vec<Param>,
-    pub return_type: TypeExpr,
+    pub return_type: TypeDef,
     pub body: Option<Block>, // `None` means it's just a declaration with no body.
+    pub span: lexer::Span,
 }
 
 #[derive(Debug)]
 pub struct VarDecl {
     pub name: String,
-    pub ty: TypeExpr,
+    pub ty: TypeDef,
     pub value: Option<Expr>,
+    pub span: lexer::Span,
 }
 
 // Parameters might have different properties in the future.
@@ -34,30 +42,8 @@ pub type Param = VarDecl;
 #[derive(Debug)]
 pub struct Expr {
     pub kind: ExprKind,
-    pub ty: TypeExpr,
-}
-
-impl Expr {
-    pub fn to_c_expr(&self) -> String {
-        match &self.kind {
-            ExprKind::Int(i) => format!("{}", i),
-            ExprKind::Str(s) => format!("{:?}", s),
-            ExprKind::FnCall { name, args } => {
-                let mut buf = String::new();
-                buf.push_str(name);
-                buf.push('(');
-                for (i, arg) in args.iter().enumerate() {
-                    buf.push_str(&arg.to_c_expr());
-                    if i < args.len() - 1 {
-                        buf.push(',');
-                    }
-                }
-                buf.push(')');
-                buf
-            }
-            _ => todo!(),
-        }
-    }
+    pub ty: TypeKind,
+    pub span: lexer::Span,
 }
 
 #[derive(Debug)]
@@ -67,7 +53,7 @@ pub enum ExprKind {
     Int(u128),
     Float(f64),
     Bool(bool),
-    Type(TypeExpr),
+    Type(TypeKind),
     Var {
         name: String,
     },
@@ -91,41 +77,41 @@ pub enum ExprKind {
     },
 }
 
-#[derive(Debug)]
-pub enum TypeExpr {
+#[derive(Debug, Clone)]
+pub struct TypeDef {
+    pub kind: TypeKind,
+    pub span: lexer::Span,
+}
+
+#[derive(Debug, Clone)]
+pub enum TypeKind {
     U0, // alias: void
     U8, // alias: char
     U16,
     U32,
     U64,
-    U128,
     I0, // alias: bool
     I8,
     I16,
     I32, // alias: int
     I64,
-    I128,
     F32, // alias: float
     F64,
     String,
-    Array(Box<TypeExpr>),
-    Ref(Box<TypeExpr>),
+    Array(Box<TypeDef>),
+    Ref(Box<TypeDef>),
     Type,
     Unknown, // This should get resolved at the typing phase.
 }
 
-impl TypeExpr {
-    pub fn to_c_type(&self) -> String {
-        match self {
-            Self::U0 => "void".to_string(),
-            Self::I32 => "int32_t".to_string(),
-            _ => todo!(),
-        }
-    }
+#[derive(Debug)]
+pub struct Stmt {
+    pub kind: StmtKind,
+    pub span: lexer::Span,
 }
 
 #[derive(Debug)]
-pub enum Stmt {
+pub enum StmtKind {
     Block(Block),
     Decl(Decl),
     If {
@@ -144,7 +130,11 @@ pub enum Stmt {
     Expr(Expr),
 }
 
-pub type Block = Vec<Stmt>;
+#[derive(Debug)]
+pub struct Block {
+    pub stmts: Vec<Stmt>,
+    pub span: lexer::Span,
+}
 
 #[derive(Debug)]
 pub enum AssignOpKind {
@@ -199,7 +189,7 @@ pub enum UnaryOpKind {
 }
 
 impl TK {
-    pub fn to_assop(&self) -> Option<AssignOpKind> {
+    pub fn to_assop(self) -> Option<AssignOpKind> {
         match self {
             Self::Equals => Some(AssignOpKind::Equals),
 
@@ -220,7 +210,7 @@ impl TK {
         }
     }
 
-    pub fn to_binop(&self) -> Option<BinaryOpKind> {
+    pub fn to_binop(self) -> Option<BinaryOpKind> {
         match self {
             Self::Plus => Some(BinaryOpKind::Plus),
             Self::Minus => Some(BinaryOpKind::Minus),
@@ -250,7 +240,7 @@ impl TK {
     // Currently there's only a single postfix unary op `Deref`,
     // which is handled differently than the rest.
     // So, we only need a method for prefix ops.
-    pub fn to_prefix_unop(&self) -> Option<UnaryOpKind> {
+    pub fn to_prefix_unop(self) -> Option<UnaryOpKind> {
         match self {
             Self::Plus => Some(UnaryOpKind::Plus),
             Self::Minus => Some(UnaryOpKind::Minus),
