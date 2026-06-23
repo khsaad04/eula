@@ -116,8 +116,8 @@ pub enum StmtKind {
     Decl(Decl),
     If {
         cond: Expr,
-        then_block: Block,
-        else_block: Option<Block>,
+        then_stmt: Box<Stmt>,
+        else_stmt: Option<Box<Stmt>>,
     },
     For {
         init: Box<Option<Stmt>>,

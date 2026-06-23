@@ -129,11 +129,16 @@ impl ast::Stmt {
             ast::StmtKind::Decl(decl) => decl.to_c(),
             ast::StmtKind::If {
                 cond,
-                then_block,
-                else_block,
+                then_stmt,
+                else_stmt,
             } => {
-                write!(buf, "if ({}) {}", cond.to_c(), then_block.to_c()).unwrap();
-                if let Some(block) = else_block {
+                write!(buf, "if ({}) {}", cond.to_c(), then_stmt.to_c()).unwrap();
+                if let Some(block) = else_stmt {
+                    if let ast::StmtKind::Block(_) = then_stmt.kind {
+                        // Don't write a semicolon if it's a block.
+                    } else {
+                        write!(buf, ";").unwrap()
+                    }
                     write!(buf, " else {}", block.to_c()).unwrap();
                 }
                 buf

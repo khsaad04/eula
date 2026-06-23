@@ -276,30 +276,18 @@ impl<'a> Parser<'a> {
                 self.eat_token();
 
                 let cond = self.parse_expr();
-
-                let last_tok_span = self.peek_next_token().span;
-                let mut then_block = ast::Block {
-                    stmts: vec![],
-                    span: last_tok_span,
-                };
-                if self.peek_next_token().kind == TK::OpenCurly {
-                    then_block = self.parse_block();
-                } else {
-                    then_block.stmts.push(self.parse_statement());
-                    then_block.span.1 = self.lexer.get_pos();
-                }
-
-                let else_block = if self.peek_next_token().kind == TK::Else {
+                let then_stmt = Box::new(self.parse_statement());
+                let else_stmt = if self.peek_next_token().kind == TK::Else {
                     self.eat_token();
-                    Some(self.parse_block())
+                    Some(Box::new(self.parse_statement()))
                 } else {
                     None
                 };
 
                 ast::StmtKind::If {
                     cond,
-                    then_block,
-                    else_block,
+                    then_stmt,
+                    else_stmt,
                 }
             }
             TK::Return => {
